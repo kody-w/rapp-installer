@@ -3,7 +3,7 @@
 #
 # Usage:
 #   irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/deploy.ps1 | iex
-#   Or: .\deploy.ps1 [-ResourceGroup "rapp-rg"] [-Location "eastus2"] [-OpenAILocation "swedencentral"]
+#   Or: .\deploy.ps1 [-ResourceGroup "rapp-rg"] [-Location "eastus2"] [-OpenAILocation "eastus2"]
 
 param(
     [string]$ResourceGroup = "",
@@ -59,10 +59,10 @@ if (-not $OpenAILocation) {
     Write-Host "Available Azure OpenAI regions:" -ForegroundColor Yellow
     Write-Host "  australiaeast, canadaeast, eastus, eastus2, francecentral,"
     Write-Host "  japaneast, northcentralus, norwayeast, southcentralus,"
-    Write-Host "  swedencentral, switzerlandnorth, uksouth, westeurope, westus, westus3"
+    Write-Host "  eastus2, switzerlandnorth, uksouth, westeurope, westus, westus3"
     Write-Host ""
-    $OpenAILocation = Read-Host "Azure OpenAI region [swedencentral]"
-    if (-not $OpenAILocation) { $OpenAILocation = "swedencentral" }
+    $OpenAILocation = Read-Host "Azure OpenAI region [eastus2]"
+    if (-not $OpenAILocation) { $OpenAILocation = "eastus2" }
 }
 
 Write-Host ""

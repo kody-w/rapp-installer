@@ -75,9 +75,9 @@ if [ -z "$OPENAI_LOCATION" ]; then
     echo "Available Azure OpenAI regions:"
     echo "  australiaeast, canadaeast, eastus, eastus2, francecentral,"
     echo "  japaneast, northcentralus, norwayeast, southcentralus,"
-    echo "  swedencentral, switzerlandnorth, uksouth, westeurope, westus, westus3"
+    echo "  eastus2, switzerlandnorth, uksouth, westeurope, westus, westus3"
     echo ""
-    OPENAI_LOCATION=$(read_input "Azure OpenAI region [swedencentral]: " "swedencentral")
+    OPENAI_LOCATION=$(read_input "Azure OpenAI region [eastus2]: " "eastus2")
 fi
 
 echo ""
