@@ -45,35 +45,143 @@ print_banner() {
     echo ""
 }
 
+# Detect OS
+detect_os() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "linux"
+    else
+        echo "unknown"
+    fi
+}
+
+# Find Python 3.11+
+find_python311() {
+    # Check common Python 3.11+ commands
+    for cmd in python3.11 python3.12 python3.13 python3; do
+        if command -v "$cmd" &> /dev/null; then
+            version=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+            major=$(echo "$version" | cut -d. -f1)
+            minor=$(echo "$version" | cut -d. -f2)
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 11 ]; then
+                echo "$cmd"
+                return 0
+            fi
+        fi
+    done
+
+    # Check Homebrew paths on macOS
+    if [[ "$(detect_os)" == "macos" ]]; then
+        for p in /opt/homebrew/bin/python3.11 /usr/local/bin/python3.11 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
+            if [[ -x "$p" ]]; then
+                echo "$p"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+# Install Python 3.11
+install_python311() {
+    local os_type=$(detect_os)
+
+    echo -e "  ${YELLOW}Installing Python 3.11...${NC}"
+
+    if [[ "$os_type" == "macos" ]]; then
+        # Check for Homebrew
+        if ! command -v brew &> /dev/null; then
+            echo -e "  ${YELLOW}Installing Homebrew first...${NC}"
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+            # Add Homebrew to PATH for this session
+            if [[ -f "/opt/homebrew/bin/brew" ]]; then
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+            elif [[ -f "/usr/local/bin/brew" ]]; then
+                eval "$(/usr/local/bin/brew shellenv)"
+            fi
+        fi
+
+        echo -e "  ${YELLOW}Installing Python 3.11 via Homebrew...${NC}"
+        brew install python@3.11
+
+        # Update PATH to include Homebrew Python
+        export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+    elif [[ "$os_type" == "linux" ]]; then
+        # Try apt (Debian/Ubuntu)
+        if command -v apt-get &> /dev/null; then
+            echo -e "  ${YELLOW}Installing Python 3.11 via apt...${NC}"
+            sudo apt-get update
+            sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+        # Try dnf (Fedora/RHEL)
+        elif command -v dnf &> /dev/null; then
+            echo -e "  ${YELLOW}Installing Python 3.11 via dnf...${NC}"
+            sudo dnf install -y python3.11
+        # Try yum (older RHEL/CentOS)
+        elif command -v yum &> /dev/null; then
+            echo -e "  ${YELLOW}Installing Python 3.11 via yum...${NC}"
+            sudo yum install -y python3.11
+        else
+            echo -e "  ${RED}✗${NC} Could not find package manager to install Python 3.11"
+            echo "    Please install Python 3.11 manually from https://python.org"
+            exit 1
+        fi
+    else
+        echo -e "  ${RED}✗${NC} Unsupported OS: $OSTYPE"
+        echo "    Please install Python 3.11 manually from https://python.org"
+        exit 1
+    fi
+}
+
 # Check prerequisites
 check_prerequisites() {
     echo "Checking prerequisites..."
 
     # Python 3.11+
-    if command -v python3 &> /dev/null; then
-        version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        major=$(echo $version | cut -d. -f1)
-        minor=$(echo $version | cut -d. -f2)
-        if [ "$major" -ge 3 ] && [ "$minor" -ge 11 ]; then
-            echo -e "  ${GREEN}✓${NC} Python $version"
+    PYTHON_CMD=$(find_python311)
+    if [[ -n "$PYTHON_CMD" ]]; then
+        version=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        echo -e "  ${GREEN}✓${NC} Python $version ($PYTHON_CMD)"
+    else
+        # Try to install Python 3.11
+        echo -e "  ${YELLOW}⚠${NC} Python 3.11+ not found"
+        install_python311
+
+        # Try to find it again
+        PYTHON_CMD=$(find_python311)
+        if [[ -n "$PYTHON_CMD" ]]; then
+            version=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+            echo -e "  ${GREEN}✓${NC} Python $version installed ($PYTHON_CMD)"
         else
-            echo -e "  ${RED}✗${NC} Python 3.11+ required (found $version)"
-            echo "    Install from https://python.org"
+            echo -e "  ${RED}✗${NC} Failed to install Python 3.11"
+            echo "    Please install manually from https://python.org"
             exit 1
         fi
-    else
-        echo -e "  ${RED}✗${NC} Python 3.11+ required"
-        echo "    Install from https://python.org"
-        exit 1
     fi
+
+    # Export PYTHON_CMD for use in setup_environment
+    export PYTHON_CMD
 
     # Git
     if command -v git &> /dev/null; then
         echo -e "  ${GREEN}✓${NC} Git $(git --version | cut -d' ' -f3)"
     else
-        echo -e "  ${RED}✗${NC} Git required"
-        echo "    Install from https://git-scm.com"
-        exit 1
+        echo -e "  ${YELLOW}⚠${NC} Git not found, installing..."
+        if [[ "$(detect_os)" == "macos" ]]; then
+            # Git comes with Xcode Command Line Tools on macOS
+            xcode-select --install 2>/dev/null || brew install git
+        elif command -v apt-get &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y git
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y git
+        else
+            echo -e "  ${RED}✗${NC} Git required - please install from https://git-scm.com"
+            exit 1
+        fi
+        echo -e "  ${GREEN}✓${NC} Git installed"
     fi
 
     # Azure CLI (optional at install, required at runtime)
@@ -173,8 +281,10 @@ setup_environment() {
     echo "Setting up Python environment..."
     cd "$RAPP_HOME"
 
+    # Use the Python 3.11+ we found earlier
     if [ ! -d "venv" ]; then
-        python3 -m venv venv
+        echo "  Creating virtual environment with $PYTHON_CMD..."
+        "$PYTHON_CMD" -m venv venv
     fi
 
     # Activate venv
