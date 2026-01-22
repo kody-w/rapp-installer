@@ -49,7 +49,7 @@
     },
     "openAIDeploymentName": {
       "type": "string",
-      "defaultValue": "gpt-deployment",
+      "defaultValue": "gpt-5.2-chat",
       "metadata": {
         "description": "Name for the model deployment"
       }
