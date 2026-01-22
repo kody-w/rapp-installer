@@ -34,7 +34,7 @@
     },
     "openAIModelName": {
       "type": "string",
-      "defaultValue": "gpt-4o",
+      "defaultValue": "gpt-5-chat",
       "allowedValues": [
         "gpt-4o",
         "gpt-4o-mini",
