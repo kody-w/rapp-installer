@@ -15,6 +15,22 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Function to read input - handles piped execution by reading from /dev/tty
+read_input() {
+    local prompt="$1"
+    local default="$2"
+    local result
+
+    # Try to read from /dev/tty (works when script is piped)
+    if [ -t 0 ]; then
+        read -p "$prompt" result
+    else
+        read -p "$prompt" result < /dev/tty
+    fi
+
+    echo "${result:-$default}"
+}
+
 print_banner() {
     echo ""
     echo -e "${CYAN}"
@@ -108,7 +124,7 @@ setup_github_auth() {
     echo "  3. Use SSH key (if already configured)"
     echo ""
 
-    read -p "Do you have GitHub access configured? (y/n): " has_auth
+    has_auth=$(read_input "Do you have GitHub access configured? (y/n): " "n")
 
     if [[ "$has_auth" != "y" && "$has_auth" != "Y" ]]; then
         echo ""

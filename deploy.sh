@@ -17,6 +17,24 @@ NC='\033[0m'
 
 TEMPLATE_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/main/azuredeploy.json"
 
+# Function to read input - handles piped execution by reading from /dev/tty
+read_input() {
+    local prompt="$1"
+    local default="$2"
+    local result
+
+    # Try to read from /dev/tty (works when script is piped)
+    if [ -t 0 ]; then
+        # stdin is a terminal
+        read -p "$prompt" result
+    else
+        # stdin is not a terminal (piped), read from /dev/tty
+        read -p "$prompt" result < /dev/tty
+    fi
+
+    echo "${result:-$default}"
+}
+
 echo ""
 echo -e "${CYAN}RAPP Azure Deployment${NC}"
 echo "======================"
@@ -39,19 +57,17 @@ ACCOUNT=$(az account show --query name -o tsv)
 echo -e "${GREEN}Logged in to: $ACCOUNT${NC}"
 echo ""
 
-# Get parameters
+# Get parameters from arguments or prompt
 RESOURCE_GROUP="${1:-}"
 LOCATION="${2:-}"
 OPENAI_LOCATION="${3:-}"
 
 if [ -z "$RESOURCE_GROUP" ]; then
-    read -p "Resource group name [rapp-rg]: " RESOURCE_GROUP
-    RESOURCE_GROUP="${RESOURCE_GROUP:-rapp-rg}"
+    RESOURCE_GROUP=$(read_input "Resource group name [rapp-rg]: " "rapp-rg")
 fi
 
 if [ -z "$LOCATION" ]; then
-    read -p "Azure region [eastus2]: " LOCATION
-    LOCATION="${LOCATION:-eastus2}"
+    LOCATION=$(read_input "Azure region [eastus2]: " "eastus2")
 fi
 
 if [ -z "$OPENAI_LOCATION" ]; then
@@ -61,8 +77,7 @@ if [ -z "$OPENAI_LOCATION" ]; then
     echo "  japaneast, northcentralus, norwayeast, southcentralus,"
     echo "  swedencentral, switzerlandnorth, uksouth, westeurope, westus, westus3"
     echo ""
-    read -p "Azure OpenAI region [swedencentral]: " OPENAI_LOCATION
-    OPENAI_LOCATION="${OPENAI_LOCATION:-swedencentral}"
+    OPENAI_LOCATION=$(read_input "Azure OpenAI region [swedencentral]: " "swedencentral")
 fi
 
 echo ""
@@ -72,8 +87,7 @@ echo "  Location:        $LOCATION"
 echo "  OpenAI Location: $OPENAI_LOCATION"
 echo ""
 
-read -p "Proceed with deployment? (y/n) [y]: " CONFIRM
-CONFIRM="${CONFIRM:-y}"
+CONFIRM=$(read_input "Proceed with deployment? (y/n) [y]: " "y")
 
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
     echo "Deployment cancelled."
