@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $RAPP_HOME = "$env:USERPROFILE\.rapp"
 $RAPP_BIN = "$env:USERPROFILE\.local\bin"
-$RAPP_REPO = "https://github.com/kody-w/RAPPAI.git"
+$RAPP_REPO = "https://github.com/kody-w/RAPPAI"
 
 function Print-Banner {
     Write-Host ""

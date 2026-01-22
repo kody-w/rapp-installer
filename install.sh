@@ -6,7 +6,7 @@ set -e
 
 RAPP_HOME="$HOME/.rapp"
 RAPP_BIN="$HOME/.local/bin"
-RAPP_REPO="https://github.com/kody-w/RAPPAI.git"  # Private repo
+RAPP_REPO="https://github.com/kody-w/RAPPAI"  # Private repo
 
 # Colors
 RED='\033[0;31m'
