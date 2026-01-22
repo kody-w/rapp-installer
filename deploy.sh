@@ -17,6 +17,9 @@ NC='\033[0m'
 
 TEMPLATE_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/main/azuredeploy.json"
 
+# Available OpenAI regions
+OPENAI_REGIONS="australiaeast canadaeast eastus eastus2 francecentral japaneast northcentralus norwayeast southcentralus swedencentral switzerlandnorth uksouth westeurope westus westus3"
+
 # Function to read input - handles piped execution by reading from /dev/tty
 read_input() {
     local prompt="$1"
@@ -33,6 +36,48 @@ read_input() {
     fi
 
     echo "${result:-$default}"
+}
+
+# Function to select OpenAI region
+select_openai_region() {
+    local current="$1"
+    echo ""
+    echo -e "${YELLOW}Available Azure OpenAI regions:${NC}"
+    echo "  1) australiaeast     6) japaneast        11) swedencentral"
+    echo "  2) canadaeast        7) northcentralus   12) switzerlandnorth"
+    echo "  3) eastus            8) norwayeast       13) uksouth"
+    echo "  4) eastus2           9) southcentralus   14) westeurope"
+    echo "  5) francecentral    10) swedencentral    15) westus"
+    echo "                                           16) westus3"
+    echo ""
+    if [ -n "$current" ]; then
+        echo -e "  Current selection: ${CYAN}$current${NC}"
+        echo ""
+    fi
+
+    local selection
+    selection=$(read_input "Enter region name or number [eastus2]: " "eastus2")
+
+    # Map number to region name
+    case "$selection" in
+        1) echo "australiaeast" ;;
+        2) echo "canadaeast" ;;
+        3) echo "eastus" ;;
+        4) echo "eastus2" ;;
+        5) echo "francecentral" ;;
+        6) echo "japaneast" ;;
+        7) echo "northcentralus" ;;
+        8) echo "norwayeast" ;;
+        9) echo "southcentralus" ;;
+        10) echo "swedencentral" ;;
+        11) echo "swedencentral" ;;
+        12) echo "switzerlandnorth" ;;
+        13) echo "uksouth" ;;
+        14) echo "westeurope" ;;
+        15) echo "westus" ;;
+        16) echo "westus3" ;;
+        *) echo "$selection" ;;
+    esac
 }
 
 echo ""
@@ -71,13 +116,7 @@ if [ -z "$LOCATION" ]; then
 fi
 
 if [ -z "$OPENAI_LOCATION" ]; then
-    echo ""
-    echo "Available Azure OpenAI regions:"
-    echo "  australiaeast, canadaeast, eastus, eastus2, francecentral,"
-    echo "  japaneast, northcentralus, norwayeast, southcentralus,"
-    echo "  eastus2, switzerlandnorth, uksouth, westeurope, westus, westus3"
-    echo ""
-    OPENAI_LOCATION=$(read_input "Azure OpenAI region [eastus2]: " "eastus2")
+    OPENAI_LOCATION=$(select_openai_region "")
 fi
 
 echo ""
@@ -100,21 +139,72 @@ echo -e "${YELLOW}Creating resource group...${NC}"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
 echo -e "${GREEN}Resource group created${NC}"
 
-# Deploy ARM template
-echo ""
-echo -e "${YELLOW}Deploying Azure resources (this may take 5-10 minutes)...${NC}"
-echo "  - Function App (Flex Consumption)"
-echo "  - Storage Account"
-echo "  - Azure OpenAI Service"
-echo "  - Application Insights"
-echo ""
+# Deploy ARM template with retry loop for OpenAI region
+DEPLOYMENT_SUCCESS=false
+MAX_RETRIES=5
+RETRY_COUNT=0
 
-DEPLOYMENT_OUTPUT=$(az deployment group create \
-    --resource-group "$RESOURCE_GROUP" \
-    --template-uri "$TEMPLATE_URL" \
-    --parameters openAILocation="$OPENAI_LOCATION" \
-    --query "properties.outputs" \
-    --output json)
+while [ "$DEPLOYMENT_SUCCESS" = false ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    echo ""
+    echo -e "${YELLOW}Deploying Azure resources (this may take 5-10 minutes)...${NC}"
+    echo "  - Function App (Flex Consumption)"
+    echo "  - Storage Account"
+    echo "  - Azure OpenAI Service (region: $OPENAI_LOCATION)"
+    echo "  - Application Insights"
+    echo ""
+
+    # Capture both stdout and stderr, don't exit on error
+    set +e
+    DEPLOYMENT_OUTPUT=$(az deployment group create \
+        --resource-group "$RESOURCE_GROUP" \
+        --template-uri "$TEMPLATE_URL" \
+        --parameters openAILocation="$OPENAI_LOCATION" \
+        --query "properties.outputs" \
+        --output json 2>&1)
+    DEPLOYMENT_EXIT_CODE=$?
+    set -e
+
+    if [ $DEPLOYMENT_EXIT_CODE -eq 0 ]; then
+        DEPLOYMENT_SUCCESS=true
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        echo ""
+        echo -e "${RED}Deployment failed!${NC}"
+
+        # Check if it's a quota/capacity error
+        if echo "$DEPLOYMENT_OUTPUT" | grep -qi "quota\|capacity\|InsufficientQuota\|sku.*not available\|not available in"; then
+            echo -e "${YELLOW}This appears to be a quota or capacity issue for region: $OPENAI_LOCATION${NC}"
+            echo ""
+            echo "Error details:"
+            echo "$DEPLOYMENT_OUTPUT" | grep -i "message\|error" | head -5
+            echo ""
+
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                RETRY=$(read_input "Would you like to try a different OpenAI region? (y/n) [y]: " "y")
+
+                if [[ "$RETRY" == "y" || "$RETRY" == "Y" ]]; then
+                    OPENAI_LOCATION=$(select_openai_region "$OPENAI_LOCATION")
+                    echo ""
+                    echo -e "${CYAN}Retrying with region: $OPENAI_LOCATION${NC}"
+                else
+                    echo "Deployment cancelled."
+                    exit 1
+                fi
+            fi
+        else
+            # Not a quota error, show full error and exit
+            echo "Error details:"
+            echo "$DEPLOYMENT_OUTPUT"
+            exit 1
+        fi
+    fi
+done
+
+if [ "$DEPLOYMENT_SUCCESS" = false ]; then
+    echo -e "${RED}Deployment failed after $MAX_RETRIES attempts.${NC}"
+    echo "Please check your Azure subscription quotas or try again later."
+    exit 1
+fi
 
 echo -e "${GREEN}Deployment complete!${NC}"
 echo ""
@@ -133,6 +223,7 @@ echo "  Resource Group:    $RESOURCE_GROUP"
 echo "  Function App:      $FUNCTION_APP"
 echo "  Storage Account:   $STORAGE_ACCOUNT"
 echo "  OpenAI Endpoint:   $OPENAI_ENDPOINT"
+echo "  OpenAI Region:     $OPENAI_LOCATION"
 echo ""
 echo "  Function URL:"
 echo "  $FUNCTION_URL"
