@@ -41,24 +41,25 @@ read_input() {
 # Function to select OpenAI region
 select_openai_region() {
     local current="$1"
-    echo ""
-    echo -e "${YELLOW}Available Azure OpenAI regions:${NC}"
-    echo "  1) australiaeast     6) japaneast        11) swedencentral"
-    echo "  2) canadaeast        7) northcentralus   12) switzerlandnorth"
-    echo "  3) eastus            8) norwayeast       13) uksouth"
-    echo "  4) eastus2           9) southcentralus   14) westeurope"
-    echo "  5) francecentral    10) swedencentral    15) westus"
-    echo "                                           16) westus3"
-    echo ""
+    # Send display output to stderr so it doesn't get captured in the return value
+    echo "" >&2
+    echo -e "${YELLOW}Available Azure OpenAI regions:${NC}" >&2
+    echo "  1) australiaeast     6) japaneast        11) swedencentral" >&2
+    echo "  2) canadaeast        7) northcentralus   12) switzerlandnorth" >&2
+    echo "  3) eastus            8) norwayeast       13) uksouth" >&2
+    echo "  4) eastus2           9) southcentralus   14) westeurope" >&2
+    echo "  5) francecentral    10) swedencentral    15) westus" >&2
+    echo "                                           16) westus3" >&2
+    echo "" >&2
     if [ -n "$current" ]; then
-        echo -e "  Current selection: ${CYAN}$current${NC}"
-        echo ""
+        echo -e "  Current selection: ${CYAN}$current${NC}" >&2
+        echo "" >&2
     fi
 
     local selection
     selection=$(read_input "Enter region name or number [eastus2]: " "eastus2")
 
-    # Map number to region name
+    # Map number to region name - only the result goes to stdout
     case "$selection" in
         1) echo "australiaeast" ;;
         2) echo "canadaeast" ;;
@@ -126,11 +127,14 @@ echo "  Location:        $LOCATION"
 echo "  OpenAI Location: $OPENAI_LOCATION"
 echo ""
 
-CONFIRM=$(read_input "Proceed with deployment? (y/n) [y]: " "y")
+# Skip confirmation if all arguments were provided via command line
+if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
+    CONFIRM=$(read_input "Proceed with deployment? (y/n) [y]: " "y")
 
-if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-    echo "Deployment cancelled."
-    exit 0
+    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+        echo "Deployment cancelled."
+        exit 0
+    fi
 fi
 
 # Create resource group
@@ -209,11 +213,19 @@ fi
 echo -e "${GREEN}Deployment complete!${NC}"
 echo ""
 
-# Extract outputs
-FUNCTION_APP=$(echo "$DEPLOYMENT_OUTPUT" | grep -o '"functionAppName":{"type":"String","value":"[^"]*"' | cut -d'"' -f8)
-FUNCTION_URL=$(echo "$DEPLOYMENT_OUTPUT" | grep -o '"functionEndpoint":{"type":"String","value":"[^"]*"' | cut -d'"' -f8)
-STORAGE_ACCOUNT=$(echo "$DEPLOYMENT_OUTPUT" | grep -o '"storageAccountName":{"type":"String","value":"[^"]*"' | cut -d'"' -f8)
-OPENAI_ENDPOINT=$(echo "$DEPLOYMENT_OUTPUT" | grep -o '"openAIEndpoint":{"type":"String","value":"[^"]*"' | cut -d'"' -f8)
+# Extract outputs using jq if available, otherwise use grep
+if command -v jq &> /dev/null; then
+    FUNCTION_APP=$(echo "$DEPLOYMENT_OUTPUT" | jq -r '.functionAppName.value // empty')
+    FUNCTION_URL=$(echo "$DEPLOYMENT_OUTPUT" | jq -r '.functionEndpoint.value // empty')
+    STORAGE_ACCOUNT=$(echo "$DEPLOYMENT_OUTPUT" | jq -r '.storageAccountName.value // empty')
+    OPENAI_ENDPOINT=$(echo "$DEPLOYMENT_OUTPUT" | jq -r '.openAIEndpoint.value // empty')
+else
+    # Fallback to grep/sed for systems without jq
+    FUNCTION_APP=$(echo "$DEPLOYMENT_OUTPUT" | grep -A1 '"functionAppName"' | grep '"value"' | sed 's/.*"value": *"\([^"]*\)".*/\1/')
+    FUNCTION_URL=$(echo "$DEPLOYMENT_OUTPUT" | grep -A1 '"functionEndpoint"' | grep '"value"' | sed 's/.*"value": *"\([^"]*\)".*/\1/')
+    STORAGE_ACCOUNT=$(echo "$DEPLOYMENT_OUTPUT" | grep -A1 '"storageAccountName"' | grep '"value"' | sed 's/.*"value": *"\([^"]*\)".*/\1/')
+    OPENAI_ENDPOINT=$(echo "$DEPLOYMENT_OUTPUT" | grep -A1 '"openAIEndpoint"' | grep '"value"' | sed 's/.*"value": *"\([^"]*\)".*/\1/')
+fi
 
 echo "═══════════════════════════════════════════════════"
 echo -e "  ${GREEN}RAPP Azure Resources Deployed!${NC}"
