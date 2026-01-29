@@ -652,6 +652,201 @@
         .delay-2 { animation-delay: 0.2s; }
         .delay-3 { animation-delay: 0.3s; }
         .delay-4 { animation-delay: 0.4s; }
+
+        /* Copilot Studio Section */
+        .copilot-content {
+            display: flex;
+            flex-direction: column;
+            gap: 3rem;
+        }
+
+        .download-card {
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+            background: linear-gradient(135deg, rgba(0, 120, 212, 0.1), rgba(92, 45, 145, 0.1));
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .download-icon {
+            flex-shrink: 0;
+        }
+
+        .download-info {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .download-info h3 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .download-info p {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .download-meta {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .download-meta span {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .download-btn {
+            flex-shrink: 0;
+        }
+
+        .integration-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .integration-step {
+            display: flex;
+            gap: 1rem;
+            padding: 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            transition: all 0.3s;
+        }
+
+        .integration-step:hover {
+            border-color: var(--accent-blue);
+        }
+
+        .step-number {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #0078D4, #5C2D91);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+
+        .step-content h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .step-content p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .step-content a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        .step-content a:hover {
+            text-decoration: underline;
+        }
+
+        .channels-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .channel-card {
+            display: flex;
+            gap: 1rem;
+            padding: 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            transition: all 0.3s;
+        }
+
+        .channel-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent-blue);
+        }
+
+        .channel-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .channel-icon.teams {
+            background: linear-gradient(135deg, #5059C9, #7B83EB);
+            color: white;
+        }
+
+        .channel-icon.copilot {
+            background: linear-gradient(135deg, #0078D4, #00BCF2);
+            color: white;
+        }
+
+        .channel-icon.power {
+            background: linear-gradient(135deg, #742774, #C239B3);
+            color: white;
+        }
+
+        .channel-info h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .channel-info p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 768px) {
+            .download-card {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .download-meta {
+                justify-content: center;
+            }
+
+            .integration-step {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .step-number {
+                margin: 0 auto;
+            }
+
+            .channel-card {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .channel-icon {
+                margin: 0 auto;
+            }
+        }
     </style>
 </head>
 <body>
@@ -661,6 +856,7 @@
             <div class="logo">RAPP</div>
             <ul class="nav-links">
                 <li><a href="#features">Features</a></li>
+                <li><a href="#copilot-studio">Copilot Studio</a></li>
                 <li><a href="#how-it-works">How It Works</a></li>
                 <li><a href="#resources">Resources</a></li>
                 <li><a href="https://github.com/kody-w/rapp-installer" target="_blank">GitHub</a></li>
@@ -778,6 +974,113 @@
                 <div class="feature-icon">&#128640;</div>
                 <h3>Flex Consumption</h3>
                 <p>Scales to zero when idle, scales to 100 instances instantly. Pay only for what you use.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Copilot Studio Integration -->
+    <section class="section" id="copilot-studio">
+        <div class="section-header">
+            <h2>Copilot Studio Integration</h2>
+            <p>Deploy directly to Power Platform, Copilot Studio, and M365 Copilot with the pre-built solution package.</p>
+        </div>
+
+        <div class="copilot-content">
+            <!-- Download Card -->
+            <div class="download-card">
+                <div class="download-icon">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                        <rect width="48" height="48" rx="12" fill="url(#copilot-gradient)"/>
+                        <path d="M24 14v14m0 0l-5-5m5 5l5-5M16 32h16" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        <defs>
+                            <linearGradient id="copilot-gradient" x1="0" y1="0" x2="48" y2="48">
+                                <stop offset="0%" stop-color="#0078D4"/>
+                                <stop offset="100%" stop-color="#5C2D91"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <div class="download-info">
+                    <h3>Power Platform Solution</h3>
+                    <p>Pre-configured Copilot Studio solution with multi-agent bots, Power Automate workflows, and M365 Copilot channels.</p>
+                    <div class="download-meta">
+                        <span>Version 1.0.0.5</span>
+                        <span>79 KB</span>
+                        <span>Unmanaged Solution</span>
+                    </div>
+                </div>
+                <a href="MSFTAIBASMultiAgentCopilot_1_0_0_5.zip" class="btn btn-primary download-btn" download>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download Solution
+                </a>
+            </div>
+
+            <!-- Integration Steps -->
+            <div class="integration-steps">
+                <div class="integration-step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h4>Import to Power Platform</h4>
+                        <p>Go to <a href="https://make.powerapps.com" target="_blank">make.powerapps.com</a>, select Solutions, then Import solution and upload the downloaded .zip file.</p>
+                    </div>
+                </div>
+
+                <div class="integration-step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h4>Configure in Copilot Studio</h4>
+                        <p>Open <a href="https://copilotstudio.microsoft.com" target="_blank">Copilot Studio</a>, find the imported RAPP AI bot, and configure your Azure OpenAI connection and agent settings.</p>
+                    </div>
+                </div>
+
+                <div class="integration-step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h4>Enable Channels</h4>
+                        <p>In Copilot Studio, go to Channels and enable <strong>Microsoft Teams</strong> and <strong>Microsoft 365 Copilot</strong> to deploy your agent across M365.</p>
+                    </div>
+                </div>
+
+                <div class="integration-step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h4>Publish to M365 Copilot</h4>
+                        <p>Click Publish in Copilot Studio. Users can then access your agent in Teams chat or through M365 Copilot extensions.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Channels Info -->
+            <div class="channels-grid">
+                <div class="channel-card">
+                    <div class="channel-icon teams">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19.2 6.4h-2.4c.3-.5.4-1 .4-1.6 0-1.8-1.4-3.2-3.2-3.2s-3.2 1.4-3.2 3.2c0 .6.2 1.1.4 1.6H8.8c-.9 0-1.6.7-1.6 1.6v8c0 .9.7 1.6 1.6 1.6h10.4c.9 0 1.6-.7 1.6-1.6V8c0-.9-.7-1.6-1.6-1.6zM14 3.2c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6-1.6-.7-1.6-1.6.7-1.6 1.6-1.6zm5.2 12.8H8.8V8h10.4v8z"/><circle cx="5.2" cy="6.4" r="2.4"/><path d="M5.2 9.6c-1.8 0-3.2 1.4-3.2 3.2v4h6.4v-4c0-1.8-1.4-3.2-3.2-3.2z"/></svg>
+                    </div>
+                    <div class="channel-info">
+                        <h4>Microsoft Teams</h4>
+                        <p>Chat with your AI agent directly in Teams channels and 1:1 conversations.</p>
+                    </div>
+                </div>
+
+                <div class="channel-card">
+                    <div class="channel-icon copilot">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                    </div>
+                    <div class="channel-info">
+                        <h4>M365 Copilot</h4>
+                        <p>Extend Microsoft 365 Copilot with custom agent capabilities via Copilot Studio plugins.</p>
+                    </div>
+                </div>
+
+                <div class="channel-card">
+                    <div class="channel-icon power">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    </div>
+                    <div class="channel-info">
+                        <h4>Power Automate</h4>
+                        <p>Includes pre-built flows for email integration and custom agent actions.</p>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
