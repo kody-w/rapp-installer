@@ -4,6 +4,41 @@ Build production-ready AI agents from transcripts in minutes.
 
 **New to RAPP?** Check out our [Getting Started Guide](https://kody-w.github.io/rapp-installer/) for a visual walkthrough.
 
+## RAPP Ecosystem
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      RAPP ECOSYSTEM                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │  RAPP Installer │  │    RAPP Hub     │  │   RAPP Store    │ │
+│  │   (This Repo)   │  │ (Implementations)│  │ (Agents/Skills) │ │
+│  │                 │  │                 │  │                 │ │
+│  │ • Install RAPP  │  │ • Browse apps   │  │ • Browse agents │ │
+│  │ • Deploy Azure  │  │ • Clone & run   │  │ • Download code │ │
+│  │ • Setup env     │  │ • Publish yours │  │ • Cross-format  │ │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘ │
+│           │                    │                    │           │
+│           └────────────────────┼────────────────────┘           │
+│                                │                                │
+│                    ┌───────────▼───────────┐                   │
+│                    │   Your AI Project     │                   │
+│                    │   (rapp.json deps)    │                   │
+│                    └───────────────────────┘                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+| Component | Description | Link |
+|-----------|-------------|------|
+| **RAPP Installer** | Installation & Azure deployment scripts | [This repo](https://github.com/kody-w/rapp-installer) |
+| **RAPP Hub** | Registry of complete AI implementations | [kody-w/RAPP_Hub](https://github.com/kody-w/RAPP_Hub) |
+| **RAPP Store** | Individual agents & skills (like npm) | [kody-w/RAPP_Store](https://github.com/kody-w/RAPP_Store) |
+
+### Quick Links
+- **Browse Implementations**: https://kody-w.github.io/RAPP_Hub/
+- **Browse Agents/Skills**: https://kody-w.github.io/RAPP_Store/
+
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fkody-w%2Frapp-installer%2Fmain%2Fazuredeploy.json)
 
 ## Install
