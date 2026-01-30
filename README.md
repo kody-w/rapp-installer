@@ -31,11 +31,13 @@ Build production-ready AI agents from transcripts in minutes.
 
 | Component | Description | Link |
 |-----------|-------------|------|
-| **RAPP Installer** | Installation & Azure deployment scripts | [This repo](https://github.com/kody-w/rapp-installer) |
-| **RAPP Hub** | Registry of complete AI implementations | [kody-w/RAPP_Hub](https://github.com/kody-w/RAPP_Hub) |
-| **RAPP Store** | Individual agents & skills (like npm) | [kody-w/RAPP_Store](https://github.com/kody-w/RAPP_Store) |
+| **RAPP Desktop** | Native desktop application | [kody-w/RAPP_Desktop](https://github.com/kody-w/RAPP_Desktop) |
+| **RAPP Installer** | Bootstrapper & Azure deployment | [This repo](https://github.com/kody-w/rapp-installer) |
+| **RAPP Hub** | Implementation registry | [kody-w/RAPP_Hub](https://github.com/kody-w/RAPP_Hub) |
+| **RAPP Store** | Agent & skill packages | [kody-w/RAPP_Store](https://github.com/kody-w/RAPP_Store) |
 
 ### Quick Links
+- **Desktop App**: https://github.com/kody-w/RAPP_Desktop/releases
 - **Browse Implementations**: https://kody-w.github.io/RAPP_Hub/
 - **Browse Agents/Skills**: https://kody-w.github.io/RAPP_Store/
 
