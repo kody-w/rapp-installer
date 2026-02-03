@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Install RAPP with Copilot CLI - Easy Guide</title>
+    <meta name="description" content="Simple step-by-step guide to install RAPP Agent using GitHub Copilot CLI. No coding required.">
+    <meta name="theme-color" content="#0f172a">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-blue-hover: #2563eb;
+            --accent-purple: #8b5cf6;
+            --accent-green: #10b981;
+            --accent-orange: #f59e0b;
+            --border-color: #334155;
+            --gradient-start: #3b82f6;
+            --gradient-end: #8b5cf6;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            min-height: 100vh;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 2rem;
+        }
+        .nav-content {
+            max-width: 900px; margin: 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .logo {
+            font-weight: 800; font-size: 1.5rem;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            text-decoration: none;
+        }
+        .nav-links {
+            display: flex; gap: 1.5rem; list-style: none; align-items: center;
+        }
+        .nav-links a {
+            color: var(--text-secondary); text-decoration: none;
+            font-size: 0.9rem; font-weight: 500; transition: color 0.2s;
+        }
+        .nav-links a:hover { color: var(--text-primary); }
+
+        /* Main Content */
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 8rem 2rem 4rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            margin-bottom: 3rem;
+        }
+
+        /* Prerequisite Box */
+        .prereq-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .prereq-box h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .prereq-list {
+            list-style: none;
+        }
+
+        .prereq-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .prereq-list li:last-child {
+            border-bottom: none;
+        }
+
+        .prereq-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .prereq-content h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .prereq-content p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .prereq-content a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        .prereq-content a:hover {
+            text-decoration: underline;
+        }
+
+        /* Steps */
+        .steps {
+            counter-reset: step;
+        }
+
+        .step {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+
+        .step::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            top: -12px;
+            left: 24px;
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .step h3 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            padding-left: 2.5rem;
+        }
+
+        .step p {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        /* Code Block */
+        .code-block {
+            background: #0d1117;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            position: relative;
+            margin: 1rem 0;
+        }
+
+        .code-block code {
+            color: #e6edf3;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--bg-tertiary);
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .copy-btn.copied {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        /* Tip Box */
+        .tip-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            margin: 1rem 0;
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-start;
+        }
+
+        .tip-box .icon {
+            font-size: 1.25rem;
+        }
+
+        .tip-box p {
+            color: var(--text-primary);
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        /* Warning Box */
+        .warning-box {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            margin: 1rem 0;
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-start;
+        }
+
+        .warning-box .icon {
+            font-size: 1.25rem;
+        }
+
+        .warning-box p {
+            color: var(--text-primary);
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        /* What Happens Section */
+        .what-happens {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-top: 3rem;
+        }
+
+        .what-happens h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .happens-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .happens-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .happens-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .happens-item h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .happens-item p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            h1 { font-size: 1.75rem; }
+            .subtitle { font-size: 1rem; }
+            .step h3 { font-size: 1.1rem; }
+            .container { padding: 6rem 1rem 2rem; }
+            .prereq-box, .step, .what-happens { padding: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-content">
+            <a href="index.html" class="logo">RAPP</a>
+            <ul class="nav-links">
+                <li><a href="index.html">Home</a></li>
+                <li><a href="https://github.com/kody-w/rapp-installer">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>Install RAPP with Copilot</h1>
+        <p class="subtitle">Let GitHub Copilot CLI do all the work for you. Just paste one command and follow along.</p>
+
+        <!-- Prerequisites -->
+        <div class="prereq-box">
+            <h2>✅ Before You Start</h2>
+            <ul class="prereq-list">
+                <li>
+                    <div class="prereq-icon">🤖</div>
+                    <div class="prereq-content">
+                        <h3>GitHub Copilot CLI</h3>
+                        <p>Install the <a href="https://docs.github.com/en/copilot/github-copilot-in-the-cli" target="_blank">GitHub Copilot CLI extension</a> for your terminal.</p>
+                    </div>
+                </li>
+                <li>
+                    <div class="prereq-icon">☁️</div>
+                    <div class="prereq-content">
+                        <h3>Azure Subscription</h3>
+                        <p>You'll need an Azure account. <a href="https://azure.microsoft.com/free" target="_blank">Get a free account</a> if you don't have one.</p>
+                    </div>
+                </li>
+                <li>
+                    <div class="prereq-icon">🔑</div>
+                    <div class="prereq-content">
+                        <h3>Repository Access</h3>
+                        <p>You need contributor access to <a href="https://github.com/kody-w/m365-agents-for-python" target="_blank">kody-w/m365-agents-for-python</a>. Request access from the repo owner.</p>
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Steps -->
+        <div class="steps">
+            <div class="step">
+                <h3>Open Your Terminal</h3>
+                <p>Open Terminal (Mac/Linux) or PowerShell (Windows). You can use VS Code's integrated terminal too.</p>
+                <div class="tip-box">
+                    <span class="icon">💡</span>
+                    <p>On Mac, press <strong>Cmd + Space</strong> and type "Terminal". On Windows, search for "PowerShell".</p>
+                </div>
+            </div>
+
+            <div class="step">
+                <h3>Run the Magic Command</h3>
+                <p>Copy and paste this command into your terminal:</p>
+                <div class="code-block">
+                    <code>gh copilot skill https://raw.githubusercontent.com/kody-w/rapp-installer/main/skill.md</code>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <p>Press <strong>Enter</strong> to run it.</p>
+            </div>
+
+            <div class="step">
+                <h3>Follow Copilot's Instructions</h3>
+                <p>Copilot will guide you through the entire setup process. It will:</p>
+                <ul style="color: var(--text-secondary); margin-left: 1.5rem; margin-top: 0.5rem;">
+                    <li>Ask you questions about your setup</li>
+                    <li>Clone the RAPP repository</li>
+                    <li>Create Azure resources for you</li>
+                    <li>Configure everything automatically</li>
+                </ul>
+                <div class="warning-box">
+                    <span class="icon">⚠️</span>
+                    <p>When prompted to login to Azure, a browser window will open. Sign in with your Azure account.</p>
+                </div>
+            </div>
+
+            <div class="step">
+                <h3>Start Building Agents!</h3>
+                <p>Once setup is complete, Copilot will start RAPP locally. You can then:</p>
+                <ul style="color: var(--text-secondary); margin-left: 1.5rem; margin-top: 0.5rem;">
+                    <li>Open <strong>http://localhost:7071</strong> in your browser</li>
+                    <li>Upload transcripts to generate AI agents</li>
+                    <li>Deploy to Microsoft Copilot Studio</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- What Happens -->
+        <div class="what-happens">
+            <h2>🔧 What Gets Created</h2>
+            <div class="happens-grid">
+                <div class="happens-item">
+                    <div class="happens-icon">🧠</div>
+                    <div>
+                        <h4>Azure OpenAI</h4>
+                        <p>GPT model for your agents</p>
+                    </div>
+                </div>
+                <div class="happens-item">
+                    <div class="happens-icon">💾</div>
+                    <div>
+                        <h4>Storage Account</h4>
+                        <p>For agent memory & files</p>
+                    </div>
+                </div>
+                <div class="happens-item">
+                    <div class="happens-icon">⚡</div>
+                    <div>
+                        <h4>Azure Functions</h4>
+                        <p>Serverless agent runtime</p>
+                    </div>
+                </div>
+                <div class="happens-item">
+                    <div class="happens-icon">🔐</div>
+                    <div>
+                        <h4>Entra ID Auth</h4>
+                        <p>Secure, keyless access</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Need help? <a href="https://github.com/kody-w/rapp-installer/issues">Open an issue</a> on GitHub.</p>
+        <p style="margin-top: 0.5rem;">RAPP - Rapid AI Agent Production Pipeline</p>
+    </footer>
+
+    <script>
+        function copyCode(btn) {
+            const code = btn.previousElementSibling.textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
