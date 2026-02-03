@@ -63,7 +63,7 @@ gh copilot skill https://raw.githubusercontent.com/kody-w/rapp-installer/main/sk
 - GitHub Copilot CLI
 - Azure subscription
 - Node.js (for Azure Functions Core Tools)
-- **GitHub contributor access** to [kody-w/m365-agents-for-python](https://github.com/kody-w/m365-agents-for-python)
+- **GitHub contributor access** to [kody-w/RAPPagent](https://github.com/kody-w/RAPPagent) (private repo - request access from owner)
 
 ---
 

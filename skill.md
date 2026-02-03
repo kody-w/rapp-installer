@@ -1,20 +1,33 @@
 # RAPP Agent Installer
 
-This skill automates the complete setup of the RAPP Agent (Rapid Agent Prototyping Platform) for local development.
+This skill automates the complete setup of the RAPP Agent (Rapid Agent Prototyping Platform) for local development and Azure deployment.
 
 ## What This Skill Does
 
 1. Clones the RAPP Agent repository
 2. Checks and installs prerequisites (Python 3.11, Azure Functions Core Tools)
-3. Creates Azure resources (Resource Group, OpenAI, Storage Account)
+3. Creates Azure resources (Resource Group, OpenAI, Storage Account, Function App)
 4. Configures local.settings.json with all credentials
 5. Installs Python dependencies
-6. Starts the function and verifies it works
+6. Deploys to Azure and generates RAPPid.json for frontend connection
+7. Starts the function and verifies it works
 
 ## Prerequisites
 
 - Azure subscription with permissions to create resources
 - GitHub Copilot CLI installed and authenticated
+
+## Quick Start Scenarios
+
+**Scenario A: Full Setup (new user)**
+- Follow all steps below
+
+**Scenario B: Frontend Ready, Need Backend**
+- User already has `index.html` open but no backend
+- Skip to Step 3 (Azure Authentication), then complete through Step 9 (Generate RAPPid.json)
+
+**Scenario C: Local Dev Only**
+- Follow Steps 1-7, skip Step 8 (Azure Deploy) and Step 9 (RAPPid.json)
 
 ## Instructions for Copilot
 
@@ -85,6 +98,7 @@ Generate a unique suffix for resource names:
 SUFFIX=$(openssl rand -hex 4)
 RESOURCE_GROUP="rapp-rg-${SUFFIX}"
 LOCATION="eastus2"
+FUNC_NAME="rapp-func-${SUFFIX}"
 ```
 
 **Create Resource Group:**
@@ -150,6 +164,31 @@ az storage share-rm create \
   --quota 5
 ```
 
+**Create Function App (for Azure deployment):**
+```bash
+az functionapp create \
+  --name $FUNC_NAME \
+  --resource-group $RESOURCE_GROUP \
+  --storage-account $STORAGE_NAME \
+  --consumption-plan-location $LOCATION \
+  --runtime python \
+  --runtime-version 3.11 \
+  --functions-version 4 \
+  --os-type Linux
+
+# Configure app settings
+az functionapp config appsettings set \
+  --name $FUNC_NAME \
+  --resource-group $RESOURCE_GROUP \
+  --settings \
+    "AZURE_OPENAI_ENDPOINT=${OPENAI_ENDPOINT}" \
+    "AZURE_OPENAI_API_VERSION=2025-01-01-preview" \
+    "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-deployment" \
+    "AZURE_STORAGE_ACCOUNT_NAME=${STORAGE_NAME}" \
+    "AZURE_FILES_SHARE_NAME=agents" \
+    "ASSISTANT_NAME=RAPP Agent"
+```
+
 **Assign RBAC roles to current user:**
 ```bash
 USER_ID=$(az ad signed-in-user show --query id -o tsv)
@@ -170,6 +209,28 @@ az role assignment create \
 # Cognitive Services OpenAI User
 az role assignment create \
   --assignee $USER_ID \
+  --role "Cognitive Services OpenAI User" \
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}"
+```
+
+**Assign RBAC roles to Function App (for Azure deployment):**
+```bash
+FUNC_IDENTITY=$(az functionapp identity assign --name $FUNC_NAME --resource-group $RESOURCE_GROUP --query principalId -o tsv)
+
+# Storage roles for Function App
+az role assignment create \
+  --assignee $FUNC_IDENTITY \
+  --role "Storage Blob Data Contributor" \
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}"
+
+az role assignment create \
+  --assignee $FUNC_IDENTITY \
+  --role "Storage File Data Privileged Contributor" \
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}"
+
+# OpenAI role for Function App
+az role assignment create \
+  --assignee $FUNC_IDENTITY \
   --role "Cognitive Services OpenAI User" \
   --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}"
 ```
@@ -218,22 +279,95 @@ curl -X POST http://localhost:7071/api/businessinsightbot_function \
 
 Expected response contains `"assistant_response"` with a greeting.
 
-### Step 8: Success Message
+### Step 8: Deploy to Azure
+
+Deploy the function app to Azure:
+```bash
+func azure functionapp publish $FUNC_NAME --build remote
+```
+
+Wait for deployment to complete (1-3 minutes). Verify the function is registered:
+```bash
+az functionapp function list --name $FUNC_NAME --resource-group $RESOURCE_GROUP -o table
+```
+
+If functions list is empty, sync triggers and restart:
+```bash
+az rest --method POST --uri "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNC_NAME}/syncfunctiontriggers?api-version=2022-03-01"
+az functionapp restart --name $FUNC_NAME --resource-group $RESOURCE_GROUP
+```
+
+Get the function key:
+```bash
+FUNC_KEY=$(az functionapp keys list --name $FUNC_NAME --resource-group $RESOURCE_GROUP --query "functionKeys.default" -o tsv)
+FUNC_URL="https://${FUNC_NAME}.azurewebsites.net/api/businessinsightbot_function"
+```
+
+Test the deployed endpoint:
+```bash
+curl -X POST "${FUNC_URL}?code=${FUNC_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"user_input": "Hello", "conversation_history": []}'
+```
+
+### Step 9: Generate RAPPid.json
+
+Create the RAPPid.json file that the frontend chat UI can import:
+```bash
+cat > RAPPid.json << EOF
+{
+  "endpoints": {
+    "rapp-azure": {
+      "id": "rapp-azure",
+      "name": "RAPP Agent (Azure)",
+      "url": "${FUNC_URL}",
+      "key": "${FUNC_KEY}",
+      "guid": "",
+      "active": true
+    }
+  },
+  "settings": {
+    "theme": "system",
+    "voiceEnabled": false
+  }
+}
+EOF
+echo "✅ Created RAPPid.json"
+cat RAPPid.json
+```
+
+Tell the user:
+
+> **RAPPid.json created!** To connect your frontend:
+> 1. Open `index.html` in your browser
+> 2. Click the ⚙️ Settings icon
+> 3. Click "Import Settings"
+> 4. Select the `RAPPid.json` file
+> 5. Your Azure endpoint is now connected!
+
+### Step 10: Success Message
 
 Tell the user:
 
 ---
 
-✅ **RAPP Agent is ready!**
+✅ **RAPP Agent is deployed and ready!**
 
 **Local endpoint:** http://localhost:7071/api/businessinsightbot_function
 
-**Web UI:** Open `index.html` in your browser
+**Azure endpoint:** `https://{FUNC_NAME}.azurewebsites.net/api/businessinsightbot_function`
+
+**Web UI:** Open `index.html` in your browser, then import `RAPPid.json` from Settings
 
 **Azure Resources Created:**
 - Resource Group: `{RESOURCE_GROUP}`
+- Function App: `{FUNC_NAME}`
 - Storage Account: `{STORAGE_NAME}`
 - OpenAI Service: `{OPENAI_NAME}`
+
+**Files Generated:**
+- `local.settings.json` - Local dev configuration (do not commit)
+- `RAPPid.json` - Import into frontend to connect to Azure endpoint
 
 **Next steps:**
 1. Add custom agents in `agents/` folder
@@ -257,3 +391,6 @@ az group delete --name $RESOURCE_GROUP --yes --no-wait
 | Storage auth fails | Wait 1-2 min for RBAC to propagate, then restart `func start` |
 | OpenAI deployment fails | Try a different region (e.g., `eastus2` instead of `swedencentral`) |
 | Python version mismatch | Ensure Python 3.11 is used, not 3.13+ |
+| Functions list empty after deploy | Sync triggers and restart function app (see Step 8) |
+| Frontend not connecting | Re-import RAPPid.json, check browser console for CORS errors |
+| `--build remote` fails | Ensure storage account has public network access enabled |
