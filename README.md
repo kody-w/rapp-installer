@@ -43,7 +43,31 @@ Build production-ready AI agents from transcripts in minutes.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fkody-w%2Frapp-installer%2Fmain%2Fazuredeploy.json)
 
-## Install
+## Install via GitHub Copilot CLI (Recommended)
+
+If you have GitHub Copilot CLI installed, use the included skill for guided installation:
+
+```bash
+gh copilot skill https://raw.githubusercontent.com/kody-w/rapp-installer/main/skill.md
+```
+
+### What It Does
+
+- Clones the RAPP Agent repository
+- Creates Azure resources (OpenAI, Storage Account)
+- Configures authentication and local settings
+- Starts the function locally
+
+### Requirements
+
+- GitHub Copilot CLI
+- Azure subscription
+- Node.js (for Azure Functions Core Tools)
+- **GitHub contributor access** to [kody-w/m365-agents-for-python](https://github.com/kody-w/m365-agents-for-python)
+
+---
+
+## Install via Script
 
 **macOS / Linux:**
 ```bash
