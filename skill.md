@@ -43,12 +43,17 @@ git --version 2>/dev/null
 gh --version 2>/dev/null
 ```
 
-**If Python 3.11+ is missing**, install it:
+**On Windows**, skip all manual prereq checks — the PowerShell installer handles everything automatically:
+```powershell
+irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
+```
+It auto-installs Python 3.11, Git, and GitHub CLI via winget on a factory Windows 11 PC. If the user is on Windows and runs this, skip to Step 2 after it completes.
+
+**If Python 3.11+ is missing** (macOS/Linux):
 - macOS: `brew install python@3.11`
 - Ubuntu/Debian: `sudo apt install python3.11 python3-pip`
-- Windows: direct the user to https://python.org
 
-**If git is missing**, install it:
+**If git is missing**:
 - macOS: `xcode-select --install`
 - Ubuntu/Debian: `sudo apt install git`
 

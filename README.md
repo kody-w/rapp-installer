@@ -6,7 +6,11 @@ A local-first AI agent server powered by GitHub Copilot. No API keys. No cloud s
 curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash
 ```
 
-**Windows:** `irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex`
+**Windows (PowerShell — works on factory Windows 11):**
+```powershell
+irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
+```
+Auto-installs Python 3.11, Git, and GitHub CLI via winget if missing.
 
 Then:
 ```bash

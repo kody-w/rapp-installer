@@ -138,7 +138,13 @@
 <div class="one-liner" onclick="copyOneLiner(this)">
   <div class="label">Install</div>
   <div class="cmd" style="border:none;padding:0;margin:0;background:none;cursor:inherit;">curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash</div>
-  <div class="hint">click to copy · works on macOS &amp; Linux</div>
+  <div class="hint">click to copy · macOS &amp; Linux</div>
+</div>
+
+<div class="one-liner" onclick="copyOneLiner(this)" style="border-color:#1f6feb;">
+  <div class="label" style="color:#58a6ff;">Windows (PowerShell)</div>
+  <div class="cmd" style="border:none;padding:0;margin:0;background:none;cursor:inherit;">irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex</div>
+  <div class="hint">click to copy · factory Windows 11 ready — auto-installs Python, Git &amp; GitHub CLI via winget</div>
 </div>
 
 <div class="tiers">

@@ -1,5 +1,7 @@
 # RAPP Brainstem Installer for Windows
 # Usage: irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
+#
+# Works on a factory Windows 11 install — auto-installs Python, Git, and GitHub CLI via winget.
 
 $ErrorActionPreference = "Stop"
 
@@ -9,42 +11,87 @@ $REPO_URL = "https://github.com/kody-w/rapp-installer.git"
 
 function Print-Banner {
     Write-Host ""
-    Write-Host "  RAPP Brainstem" -ForegroundColor Cyan
+    Write-Host "  🧠 RAPP Brainstem" -ForegroundColor Cyan
     Write-Host "  Local-first AI agent server" -ForegroundColor Gray
-    Write-Host "  Powered by GitHub Copilot" -ForegroundColor Gray
+    Write-Host "  Powered by GitHub Copilot — no API keys needed" -ForegroundColor Gray
     Write-Host ""
+}
+
+function Install-WithWinget {
+    param([string]$PackageId, [string]$Name)
+    Write-Host "  [..] Installing $Name via winget..." -ForegroundColor Yellow
+    winget install --id $PackageId --accept-source-agreements --accept-package-agreements --silent 2>&1 | Out-Null
+    # Refresh PATH for this session
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
 
 function Check-Prerequisites {
     Write-Host "Checking prerequisites..."
 
+    # winget (ships with Windows 11)
+    try {
+        winget --version 2>&1 | Out-Null
+    } catch {
+        Write-Host "  [X] winget not found — this installer requires Windows 10 1709+ or Windows 11" -ForegroundColor Red
+        exit 1
+    }
+
+    # Git
+    $gitOk = $false
+    try {
+        $gitVersion = git --version 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] $gitVersion" -ForegroundColor Green
+            $gitOk = $true
+        }
+    } catch {}
+    if (-not $gitOk) {
+        Install-WithWinget "Git.Git" "Git"
+        try {
+            git --version 2>&1 | Out-Null
+            Write-Host "  [OK] Git installed" -ForegroundColor Green
+        } catch {
+            Write-Host "  [X] Git install failed — install manually from https://git-scm.com" -ForegroundColor Red
+            exit 1
+        }
+    }
+
     # Python 3.11+
+    $pythonOk = $false
     try {
         $pythonVersion = python --version 2>&1
         if ($pythonVersion -match "Python 3\.(\d+)") {
             $minor = [int]$Matches[1]
             if ($minor -ge 11) {
                 Write-Host "  [OK] $pythonVersion" -ForegroundColor Green
-            } else {
-                throw "Too old"
+                $pythonOk = $true
             }
-        } else {
-            throw "Cannot parse"
         }
-    } catch {
-        Write-Host "  [X] Python 3.11+ required" -ForegroundColor Red
-        Write-Host "      Install from https://python.org"
-        exit 1
+    } catch {}
+    if (-not $pythonOk) {
+        Install-WithWinget "Python.Python.3.11" "Python 3.11"
+        try {
+            $pythonVersion = python --version 2>&1
+            Write-Host "  [OK] $pythonVersion installed" -ForegroundColor Green
+        } catch {
+            Write-Host "  [X] Python install failed — install from https://python.org" -ForegroundColor Red
+            exit 1
+        }
     }
 
-    # Git
+    # GitHub CLI (optional but recommended)
     try {
-        $gitVersion = git --version 2>&1
-        Write-Host "  [OK] $gitVersion" -ForegroundColor Green
+        gh --version 2>&1 | Out-Null
+        Write-Host "  [OK] GitHub CLI installed" -ForegroundColor Green
     } catch {
-        Write-Host "  [X] Git required" -ForegroundColor Red
-        Write-Host "      Install from https://git-scm.com"
-        exit 1
+        Write-Host "  [..] Installing GitHub CLI..." -ForegroundColor Yellow
+        Install-WithWinget "GitHub.cli" "GitHub CLI"
+        try {
+            gh --version 2>&1 | Out-Null
+            Write-Host "  [OK] GitHub CLI installed" -ForegroundColor Green
+        } catch {
+            Write-Host "  [!] GitHub CLI not installed (optional — you can authenticate later)" -ForegroundColor Yellow
+        }
     }
 }
 
@@ -65,6 +112,7 @@ function Install-Brainstem {
         if (Test-Path "$BRAINSTEM_HOME\src") {
             Remove-Item -Recurse -Force "$BRAINSTEM_HOME\src" -ErrorAction SilentlyContinue
         }
+        Write-Host "  Cloning repository..."
         git clone --quiet $REPO_URL "$BRAINSTEM_HOME\src" 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  [X] Failed to clone repository" -ForegroundColor Red
@@ -91,7 +139,7 @@ function Install-CLI {
         New-Item -ItemType Directory -Force -Path $BRAINSTEM_BIN | Out-Null
     }
 
-    # Batch wrapper
+    # Batch wrapper (works in cmd.exe and PowerShell)
     $cmdContent = @"
 @echo off
 cd /d "$BRAINSTEM_HOME\src\rapp_brainstem"
@@ -102,15 +150,16 @@ python brainstem.py %*
     # PowerShell wrapper
     $psContent = @"
 Set-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
-python brainstem.py `$args
+python brainstem.py @args
 "@
     Set-Content -Path "$BRAINSTEM_BIN\brainstem.ps1" -Value $psContent
 
-    # Add to PATH
+    # Add to PATH if not already there
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($userPath -notlike "*$BRAINSTEM_BIN*") {
         [Environment]::SetEnvironmentVariable("Path", "$BRAINSTEM_BIN;$userPath", "User")
-        Write-Host "  Added $BRAINSTEM_BIN to PATH" -ForegroundColor Green
+        $env:Path = "$BRAINSTEM_BIN;$env:Path"
+        Write-Host "  Added to PATH" -ForegroundColor Green
     }
 
     Write-Host "  [OK] CLI installed" -ForegroundColor Green
@@ -137,9 +186,9 @@ function Main {
     Write-Host "  [OK] RAPP Brainstem installed!" -ForegroundColor Green
     Write-Host "===================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Get started (open a NEW terminal):"
-    Write-Host "    gh auth login        # authenticate with GitHub"
-    Write-Host "    brainstem            # start the server (localhost:7071)"
+    Write-Host "  Get started:"
+    Write-Host "    gh auth login        " -NoNewline; Write-Host "# authenticate with GitHub" -ForegroundColor Gray
+    Write-Host "    brainstem            " -NoNewline; Write-Host "# start the server (localhost:7071)" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  Then open http://localhost:7071 in your browser."
     Write-Host ""
