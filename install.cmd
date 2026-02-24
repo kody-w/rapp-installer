@@ -1,29 +1,26 @@
 @echo off
-REM RAPP Installer for Windows CMD
-REM This wrapper launches the PowerShell installer
-REM
-REM Usage: install.cmd
-REM Or: curl -o install.cmd https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.cmd && install.cmd
+REM RAPP Brainstem Installer for Windows CMD
+REM Launches the PowerShell installer
 
 echo.
-echo RAPP Installer
-echo ==============
+echo   RAPP Brainstem Installer
+echo   ========================
 echo.
-echo Launching PowerShell installer...
+echo   Launching installer...
 echo.
 
-REM Run the PowerShell installer
 powershell -ExecutionPolicy Bypass -Command "& { irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex }"
 
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo Installation failed. Please try running install.ps1 directly in PowerShell.
+    echo   Installation failed. Try running install.ps1 directly in PowerShell.
     echo.
     pause
     exit /b 1
 )
 
 echo.
-echo Installation complete! Open a new terminal and run: rapp
+echo   Installation complete!
+echo   Open a new terminal and run: brainstem
 echo.
 pause

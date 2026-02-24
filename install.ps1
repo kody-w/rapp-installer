@@ -1,35 +1,24 @@
-# RAPP Installer for Windows
-# https://github.com/kody-w/rapp-installer
-#
-# Install:
-#   irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
-#
-# Or download and run:
-#   .\install.ps1
+# RAPP Brainstem Installer for Windows
+# Usage: irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
-$RAPP_HOME = "$env:USERPROFILE\.rapp"
-$RAPP_BIN = "$env:USERPROFILE\.local\bin"
-$RAPP_REPO = "https://github.com/kody-w/RAPPAI"
+$BRAINSTEM_HOME = "$env:USERPROFILE\.brainstem"
+$BRAINSTEM_BIN = "$env:USERPROFILE\.local\bin"
+$REPO_URL = "https://github.com/kody-w/rapp-installer.git"
 
 function Print-Banner {
     Write-Host ""
-    Write-Host "  RAPP - Rapid AI Agent Production Pipeline" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  ██████╗  █████╗ ██████╗ ██████╗ " -ForegroundColor Cyan
-    Write-Host "  ██╔══██╗██╔══██╗██╔══██╗██╔══██╗" -ForegroundColor Cyan
-    Write-Host "  ██████╔╝███████║██████╔╝██████╔╝" -ForegroundColor Cyan
-    Write-Host "  ██╔══██╗██╔══██║██╔═══╝ ██╔═══╝ " -ForegroundColor Cyan
-    Write-Host "  ██║  ██║██║  ██║██║     ██║     " -ForegroundColor Cyan
-    Write-Host "  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝     " -ForegroundColor Cyan
+    Write-Host "  RAPP Brainstem" -ForegroundColor Cyan
+    Write-Host "  Local-first AI agent server" -ForegroundColor Gray
+    Write-Host "  Powered by GitHub Copilot" -ForegroundColor Gray
     Write-Host ""
 }
 
 function Check-Prerequisites {
     Write-Host "Checking prerequisites..."
 
-    # Check Python
+    # Python 3.11+
     try {
         $pythonVersion = python --version 2>&1
         if ($pythonVersion -match "Python 3\.(\d+)") {
@@ -37,12 +26,10 @@ function Check-Prerequisites {
             if ($minor -ge 11) {
                 Write-Host "  [OK] $pythonVersion" -ForegroundColor Green
             } else {
-                Write-Host "  [X] Python 3.11+ required (found $pythonVersion)" -ForegroundColor Red
-                Write-Host "      Install from https://python.org"
-                exit 1
+                throw "Too old"
             }
         } else {
-            throw "Cannot parse Python version"
+            throw "Cannot parse"
         }
     } catch {
         Write-Host "  [X] Python 3.11+ required" -ForegroundColor Red
@@ -50,7 +37,7 @@ function Check-Prerequisites {
         exit 1
     }
 
-    # Check Git
+    # Git
     try {
         $gitVersion = git --version 2>&1
         Write-Host "  [OK] $gitVersion" -ForegroundColor Green
@@ -59,137 +46,39 @@ function Check-Prerequisites {
         Write-Host "      Install from https://git-scm.com"
         exit 1
     }
-
-    # Check Azure CLI (optional)
-    try {
-        $azVersion = az --version 2>&1 | Select-Object -First 1
-        Write-Host "  [OK] Azure CLI installed" -ForegroundColor Green
-    } catch {
-        Write-Host "  [!] Azure CLI not found (required for setup)" -ForegroundColor Yellow
-        Write-Host "      Install later: https://aka.ms/installazurecli"
-    }
 }
 
-function Setup-GitHubAuth {
+function Install-Brainstem {
     Write-Host ""
-    Write-Host "GitHub Authentication Required" -ForegroundColor Yellow
-    Write-Host "RAPP source code is in a private repository."
-    Write-Host ""
+    Write-Host "Installing RAPP Brainstem..."
 
-    # Check if gh CLI is available
-    try {
-        $ghAuth = gh auth status 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [OK] Already authenticated with GitHub CLI" -ForegroundColor Green
-            return
-        }
-    } catch {
-        # gh not installed, continue with other methods
+    if (-not (Test-Path $BRAINSTEM_HOME)) {
+        New-Item -ItemType Directory -Force -Path $BRAINSTEM_HOME | Out-Null
     }
 
-    # Test if we can access the repo
-    try {
-        $testAccess = git ls-remote $RAPP_REPO 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [OK] Git credentials found" -ForegroundColor Green
-            return
-        }
-    } catch {
-        # No access, continue
-    }
-
-    Write-Host "Options to authenticate:"
-    Write-Host ""
-    Write-Host "  1. Install GitHub CLI (recommended):"
-    Write-Host "     winget install GitHub.cli"
-    Write-Host "     gh auth login"
-    Write-Host ""
-    Write-Host "  2. Use HTTPS with personal access token"
-    Write-Host "     When prompted, enter your GitHub username and PAT as password"
-    Write-Host ""
-
-    $hasAuth = Read-Host "Do you have GitHub access configured? (y/n)"
-
-    if ($hasAuth -notin @("y", "Y")) {
-        Write-Host ""
-        Write-Host "To get access:"
-        Write-Host "  1. Request access to github.com/kody-w/RAPP"
-        Write-Host "  2. Create a Personal Access Token: https://github.com/settings/tokens"
-        Write-Host "  3. Run this installer again"
-        exit 1
-    }
-}
-
-function Install-RAPP {
-    Write-Host ""
-    Write-Host "Installing RAPP..."
-
-    # Create RAPP home directory
-    if (-not (Test-Path $RAPP_HOME)) {
-        New-Item -ItemType Directory -Force -Path $RAPP_HOME | Out-Null
-    }
-
-    # Clone or update repo
-    if (Test-Path "$RAPP_HOME\src\.git") {
+    if (Test-Path "$BRAINSTEM_HOME\src\.git") {
         Write-Host "  Updating existing installation..."
-        Push-Location "$RAPP_HOME\src"
-        try {
-            git pull --quiet 2>&1 | Out-Null
-        } catch {
-            Write-Host "  Warning: Could not update, using existing version" -ForegroundColor Yellow
-        }
+        Push-Location "$BRAINSTEM_HOME\src"
+        try { git pull --quiet 2>&1 | Out-Null } catch {}
         Pop-Location
     } else {
-        Write-Host "  Cloning repository (this may prompt for credentials)..."
-
-        # Remove existing src if it's not a git repo
-        if (Test-Path "$RAPP_HOME\src") {
-            Remove-Item -Recurse -Force "$RAPP_HOME\src" -ErrorAction SilentlyContinue
+        if (Test-Path "$BRAINSTEM_HOME\src") {
+            Remove-Item -Recurse -Force "$BRAINSTEM_HOME\src" -ErrorAction SilentlyContinue
         }
-
-        try {
-            git clone --quiet $RAPP_REPO "$RAPP_HOME\src" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git clone failed"
-            }
-        } catch {
+        git clone --quiet $REPO_URL "$BRAINSTEM_HOME\src" 2>&1
+        if ($LASTEXITCODE -ne 0) {
             Write-Host "  [X] Failed to clone repository" -ForegroundColor Red
-            Write-Host ""
-            Write-Host "  Possible causes:"
-            Write-Host "    - No access to private repository"
-            Write-Host "    - Invalid credentials"
-            Write-Host "    - Network issues"
-            Write-Host ""
-            Write-Host "  Request access at: github.com/kody-w/RAPP"
             exit 1
         }
     }
     Write-Host "  [OK] Source code ready" -ForegroundColor Green
 }
 
-function Setup-Environment {
+function Setup-Dependencies {
     Write-Host ""
-    Write-Host "Setting up Python environment..."
-
-    Push-Location $RAPP_HOME
-
-    # Create virtual environment
-    if (-not (Test-Path "venv")) {
-        python -m venv venv
-    }
-
-    # Activate and install dependencies
-    & ".\venv\Scripts\Activate.ps1"
-
-    # Upgrade pip
-    pip install --upgrade pip --quiet 2>&1 | Out-Null
-
-    # Install dependencies
-    Write-Host "  Installing dependencies (this may take a moment)..."
-    if (Test-Path "src\requirements.txt") {
-        pip install -r src\requirements.txt --quiet 2>&1 | Out-Null
-    }
-
+    Write-Host "Installing dependencies..."
+    Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
+    python -m pip install -r requirements.txt --quiet 2>&1 | Out-Null
     Pop-Location
     Write-Host "  [OK] Dependencies installed" -ForegroundColor Green
 }
@@ -198,68 +87,62 @@ function Install-CLI {
     Write-Host ""
     Write-Host "Installing CLI..."
 
-    # Create bin directory
-    if (-not (Test-Path $RAPP_BIN)) {
-        New-Item -ItemType Directory -Force -Path $RAPP_BIN | Out-Null
+    if (-not (Test-Path $BRAINSTEM_BIN)) {
+        New-Item -ItemType Directory -Force -Path $BRAINSTEM_BIN | Out-Null
     }
 
-    # Create batch file wrapper
-    $wrapperContent = @"
+    # Batch wrapper
+    $cmdContent = @"
 @echo off
-set RAPP_HOME=%USERPROFILE%\.rapp
-
-REM Activate virtual environment
-call "%RAPP_HOME%\venv\Scripts\activate.bat"
-
-REM Set Python path
-set PYTHONPATH=%RAPP_HOME%\src;%PYTHONPATH%
-
-REM Run CLI
-python -m rapp_cli %*
+cd /d "$BRAINSTEM_HOME\src\rapp_brainstem"
+python brainstem.py %*
 "@
+    Set-Content -Path "$BRAINSTEM_BIN\brainstem.cmd" -Value $cmdContent
 
-    Set-Content -Path "$RAPP_BIN\rapp.cmd" -Value $wrapperContent
-
-    # Also create PowerShell wrapper for PS users
-    $psWrapperContent = @"
-`$env:RAPP_HOME = "`$env:USERPROFILE\.rapp"
-& "`$env:RAPP_HOME\venv\Scripts\Activate.ps1"
-`$env:PYTHONPATH = "`$env:RAPP_HOME\src;`$env:PYTHONPATH"
-python -m rapp_cli `$args
+    # PowerShell wrapper
+    $psContent = @"
+Set-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
+python brainstem.py `$args
 "@
+    Set-Content -Path "$BRAINSTEM_BIN\brainstem.ps1" -Value $psContent
 
-    Set-Content -Path "$RAPP_BIN\rapp.ps1" -Value $psWrapperContent
-
-    # Add to PATH if not already there
+    # Add to PATH
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($userPath -notlike "*$RAPP_BIN*") {
-        [Environment]::SetEnvironmentVariable("Path", "$RAPP_BIN;$userPath", "User")
-        Write-Host "  Added $RAPP_BIN to PATH" -ForegroundColor Green
+    if ($userPath -notlike "*$BRAINSTEM_BIN*") {
+        [Environment]::SetEnvironmentVariable("Path", "$BRAINSTEM_BIN;$userPath", "User")
+        Write-Host "  Added $BRAINSTEM_BIN to PATH" -ForegroundColor Green
     }
 
-    Write-Host "  [OK] CLI installed to $RAPP_BIN\rapp.cmd" -ForegroundColor Green
+    Write-Host "  [OK] CLI installed" -ForegroundColor Green
 }
 
-# Main installation
+function Create-Env {
+    $envFile = "$BRAINSTEM_HOME\src\rapp_brainstem\.env"
+    $exampleFile = "$BRAINSTEM_HOME\src\rapp_brainstem\.env.example"
+    if (-not (Test-Path $envFile) -and (Test-Path $exampleFile)) {
+        Copy-Item $exampleFile $envFile
+    }
+}
+
 function Main {
     Print-Banner
     Check-Prerequisites
-    Setup-GitHubAuth
-    Install-RAPP
-    Setup-Environment
+    Install-Brainstem
+    Setup-Dependencies
     Install-CLI
+    Create-Env
 
     Write-Host ""
     Write-Host "===================================================" -ForegroundColor Cyan
-    Write-Host "  [OK] RAPP installed successfully!" -ForegroundColor Green
+    Write-Host "  [OK] RAPP Brainstem installed!" -ForegroundColor Green
     Write-Host "===================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Get started (open a NEW terminal first):"
-    Write-Host "    rapp              Start RAPP (opens web UI)"
-    Write-Host "    rapp setup        Configure Azure connection"
-    Write-Host "    rapp --help       Show all commands"
+    Write-Host "  Get started (open a NEW terminal):"
+    Write-Host "    gh auth login        # authenticate with GitHub"
+    Write-Host "    brainstem            # start the server (localhost:7071)"
+    Write-Host ""
+    Write-Host "  Then open http://localhost:7071 in your browser."
     Write-Host ""
 }
 
-# Run main
 Main

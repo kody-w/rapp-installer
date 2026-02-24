@@ -1,396 +1,464 @@
-# RAPP Agent Installer
+---
+name: rapp-brainstem
+version: 1.0.0
+description: Install and configure RAPP Brainstem — a local-first AI agent server powered by GitHub Copilot.
+homepage: https://kody-w.github.io/rapp-installer/
+metadata: {"emoji":"🧠","category":"ai-agents","repo":"https://github.com/kody-w/rapp-installer"}
+---
 
-This skill automates the complete setup of the RAPP Agent (Rapid Agent Prototyping Platform) for local development and Azure deployment.
+# RAPP Brainstem
 
-## What This Skill Does
+A local-first AI agent server. No API keys. No cloud setup. Just a GitHub account.
 
-1. Clones the RAPP Agent repository
-2. Checks and installs prerequisites (Python 3.11, Azure Functions Core Tools)
-3. Creates Azure resources (Resource Group, OpenAI, Storage Account, Function App)
-4. Configures local.settings.json with all credentials
-5. Installs Python dependencies
-6. Deploys to Azure and generates RAPPid.json for frontend connection
-7. Starts the function and verifies it works
+The brainstem teaches you the Microsoft AI stack one layer at a time:
 
-## Prerequisites
+| Tier | Metaphor | What it does |
+|------|----------|-------------|
+| 🧠 **Brainstem** | Survival basics | Local agent server — soul, tools, conversation |
+| ☁️ **Spinal Cord** | Cloud body | Deploy to Azure — always-on, persistent storage |
+| 🤖 **Nervous System** | Enterprise reach | Copilot Studio — Teams, M365 Copilot |
 
-- Azure subscription with permissions to create resources
-- GitHub Copilot CLI installed and authenticated
-
-## Quick Start Scenarios
-
-**Scenario A: Full Setup (new user)**
-- Follow all steps below
-
-**Scenario B: Frontend Ready, Need Backend**
-- User already has `index.html` open but no backend
-- Skip to Step 3 (Azure Authentication), then complete through Step 9 (Generate RAPPid.json)
-
-**Scenario C: Local Dev Only**
-- Follow Steps 1-7, skip Step 8 (Azure Deploy) and Step 9 (RAPPid.json)
+Each tier builds on the last. Start with Tier 1. Layer up when the user is ready.
 
 ## Instructions for Copilot
 
-Execute the following steps autonomously. Only pause and ask for user input when explicitly marked with ⏸️ PAUSE.
+Execute these steps autonomously. Only pause and ask the user when marked with ⏸️.
 
-### Step 1: Clone Repository
+After completing each tier, tell the user what they just learned and offer the next tier. Do not proceed to the next tier unless the user asks.
+
+---
+
+## 🧠 Tier 1: The Brainstem
+
+*The biological brainstem keeps you alive — breathing, heartbeat, reflexes. This tier does the same for your AI: it runs the core agent loop, calls tools, and responds. Everything else builds on top of this.*
+
+### Step 1: Check the Environment
+
+Detect the OS and check what's already installed:
 
 ```bash
-git clone https://github.com/kody-w/m365-agents-for-python.git
-cd m365-agents-for-python/RAPPagent
+uname -s
+python3 --version 2>/dev/null || python --version 2>/dev/null
+git --version 2>/dev/null
+gh --version 2>/dev/null
 ```
 
-### Step 2: Check Prerequisites
+**If Python 3.11+ is missing**, install it:
+- macOS: `brew install python@3.11`
+- Ubuntu/Debian: `sudo apt install python3.11 python3-pip`
+- Windows: direct the user to https://python.org
 
-Check if the following are installed. If not, provide installation commands for the user's OS:
+**If git is missing**, install it:
+- macOS: `xcode-select --install`
+- Ubuntu/Debian: `sudo apt install git`
 
-**Python 3.11:**
+**If gh (GitHub CLI) is missing**, install it:
+- macOS: `brew install gh`
+- Ubuntu/Debian: `sudo apt install gh`
+- Windows: `winget install GitHub.cli`
+
+### Step 2: ⏸️ GitHub Authentication
+
+Tell the user:
+
+> **🧠 The brainstem uses your GitHub Copilot subscription as its AI engine — no API keys needed.**
+>
+> Run this to authenticate:
+> ```
+> gh auth login
+> ```
+> Let me know when you're signed in.
+
+After they confirm, verify:
 ```bash
-python3 --version
+gh auth token >/dev/null 2>&1 && echo "✓ authenticated" || echo "✗ not authenticated"
 ```
 
-If not 3.11.x, tell user:
-- Mac: `brew install python@3.11`
-- Windows: Download from https://www.python.org/downloads/release/python-3110/
-- Linux: `sudo apt install python3.11`
+### Step 3: Install the Brainstem
 
-**Azure Functions Core Tools v4:**
 ```bash
-func --version
+git clone https://github.com/kody-w/rapp-installer.git ~/.brainstem/src 2>/dev/null || (cd ~/.brainstem/src && git pull)
+cd ~/.brainstem/src/rapp_brainstem
+pip3 install -r requirements.txt -q
 ```
 
-If not installed:
+Create the CLI wrapper:
+```bash
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/brainstem << 'WRAPPER'
+#!/bin/bash
+cd ~/.brainstem/src/rapp_brainstem
+exec python3 brainstem.py "$@"
+WRAPPER
+chmod +x ~/.local/bin/brainstem
+```
+
+Make sure `~/.local/bin` is in PATH:
+```bash
+echo $PATH | grep -q '.local/bin' || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+```
+
+Create `.env` from example if it doesn't exist:
+```bash
+cd ~/.brainstem/src/rapp_brainstem
+[ -f .env ] || cp .env.example .env
+```
+
+### Step 4: Start and Verify
+
+Start the brainstem:
+```bash
+cd ~/.brainstem/src/rapp_brainstem && python3 brainstem.py &
+sleep 3
+```
+
+Health check:
+```bash
+curl -s http://localhost:7071/health
+```
+
+Expected response contains `"status": "ok"` with model and agent info.
+
+Test a conversation:
+```bash
+curl -s -X POST http://localhost:7071/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_input": "Hello! What can you do?"}' | python3 -m json.tool
+```
+
+### Step 5: ⏸️ Tier 1 Complete
+
+Tell the user:
+
+> **🧠 Your brainstem is alive!**
+>
+> Open **http://localhost:7071** in your browser for the chat UI.
+>
+> **What you just set up:**
+> - A local AI agent server with tool-calling and conversation
+> - GitHub Copilot powers the AI — no API keys, no monthly bills
+> - Agents auto-discovered from the `agents/` folder
+> - Soul file (`soul.md`) defines the personality
+>
+> **Try these next:**
+> - Edit `~/.brainstem/src/rapp_brainstem/soul.md` to change the personality
+> - Look at `agents/hello_agent.py` as a template for your own agents
+> - Open the ⚡ Sources panel in the chat UI to connect remote agent repos
+>
+> **When you're ready to give this a cloud body, say "deploy to Azure" and I'll walk you through Tier 2.**
+
+Save the install state for future reference:
+```bash
+mkdir -p ~/.config/brainstem
+cat > ~/.config/brainstem/state.json << 'STATE'
+{
+  "tier": 1,
+  "install_dir": "~/.brainstem/src/rapp_brainstem",
+  "local_url": "http://localhost:7071",
+  "status": "running"
+}
+STATE
+```
+
+**Do not proceed to Tier 2 unless the user asks.**
+
+---
+
+## ☁️ Tier 2: The Spinal Cord
+
+*The spinal cord connects your brainstem to the rest of your body. Deploying to Azure does the same — your agent is now always-on, reachable from anywhere, with persistent storage and monitoring.*
+
+Only run this tier if the user asks to deploy to Azure.
+
+### Step 6: Check Azure Prerequisites
+
+```bash
+az --version 2>/dev/null | head -1
+func --version 2>/dev/null
+```
+
+**If Azure CLI is missing:**
+- macOS: `brew install azure-cli`
+- Ubuntu/Debian: `curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash`
+- Windows: `winget install Microsoft.AzureCLI`
+
+**If Azure Functions Core Tools is missing:**
 ```bash
 npm install -g azure-functions-core-tools@4 --unsafe-perm true
 ```
 
-**Azure CLI:**
-```bash
-az --version
-```
-
-If not installed, direct to: https://docs.microsoft.com/cli/azure/install-azure-cli
-
-### Step 3: ⏸️ PAUSE - Azure Authentication
+### Step 7: ⏸️ Azure Authentication
 
 Tell the user:
-> "I need you to authenticate with Azure. Please run `az login` in your terminal and complete the browser authentication. Let me know when you're done."
 
-After user confirms, verify login:
+> **☁️ Let's give your brainstem a cloud body.**
+>
+> Run `az login` and complete the browser authentication. Let me know when you're done.
+
+After they confirm:
 ```bash
-az account show --query "{subscription:name, user:user.name}" -o table
+az account show --query "{subscription:name, id:id}" -o table
 ```
 
-If user has multiple subscriptions, ask which one to use:
+If they have multiple subscriptions, list them and ask which one:
 ```bash
 az account list --query "[].{Name:name, ID:id, Default:isDefault}" -o table
 ```
 
-Set the selected subscription:
+Set the chosen subscription:
 ```bash
-az account set --subscription "SUBSCRIPTION_ID"
+az account set --subscription "CHOSEN_SUBSCRIPTION_ID"
 ```
 
-### Step 4: Create Azure Resources
+### Step 8: Deploy Azure Resources
 
-Generate a unique suffix for resource names:
+Generate unique names and deploy:
 ```bash
 SUFFIX=$(openssl rand -hex 4)
-RESOURCE_GROUP="rapp-rg-${SUFFIX}"
+RESOURCE_GROUP="brainstem-rg-${SUFFIX}"
 LOCATION="eastus2"
-FUNC_NAME="rapp-func-${SUFFIX}"
+
+az group create --name $RESOURCE_GROUP --location $LOCATION -o none
+
+az deployment group create \
+  --resource-group $RESOURCE_GROUP \
+  --template-uri https://raw.githubusercontent.com/kody-w/rapp-installer/main/azuredeploy.json \
+  --parameters openAILocation=swedencentral \
+  -o none
 ```
 
-**Create Resource Group:**
+This creates: Function App (Python 3.11), Azure OpenAI (GPT-4o), Storage Account, Application Insights. All using Entra ID auth — no API keys.
+
+Get the resource names:
 ```bash
-az group create --name $RESOURCE_GROUP --location $LOCATION
+FUNC_NAME=$(az functionapp list -g $RESOURCE_GROUP --query "[0].name" -o tsv)
+STORAGE_NAME=$(az storage account list -g $RESOURCE_GROUP --query "[0].name" -o tsv)
+OPENAI_NAME=$(az cognitiveservices account list -g $RESOURCE_GROUP --query "[0].name" -o tsv)
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 ```
 
-**Create Azure OpenAI (or use existing):**
+### Step 9: Assign RBAC Roles
 
-Ask user: "Do you have an existing Azure OpenAI resource? (yes/no)"
-
-If NO, create one:
-```bash
-OPENAI_NAME="rapp-openai-${SUFFIX}"
-az cognitiveservices account create \
-  --name $OPENAI_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --kind OpenAI \
-  --sku S0 \
-  --location swedencentral \
-  --yes
-
-# Deploy GPT model
-az cognitiveservices account deployment create \
-  --name $OPENAI_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --deployment-name "gpt-deployment" \
-  --model-name "gpt-4o" \
-  --model-version "2024-08-06" \
-  --model-format OpenAI \
-  --sku-name "Standard" \
-  --sku-capacity 10
-```
-
-Get endpoint:
-```bash
-OPENAI_ENDPOINT=$(az cognitiveservices account show \
-  --name $OPENAI_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --query "properties.endpoint" -o tsv)
-```
-
-If YES, ask for:
-- OpenAI endpoint URL
-- Deployment name
-
-**Create Storage Account:**
-```bash
-STORAGE_NAME="rappst${SUFFIX}"
-az storage account create \
-  --name $STORAGE_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION \
-  --sku Standard_LRS \
-  --kind StorageV2 \
-  --allow-shared-key-access false
-
-# Create file share
-az storage share-rm create \
-  --name "agents" \
-  --storage-account $STORAGE_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --quota 5
-```
-
-**Create Function App (for Azure deployment):**
-```bash
-az functionapp create \
-  --name $FUNC_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --storage-account $STORAGE_NAME \
-  --consumption-plan-location $LOCATION \
-  --runtime python \
-  --runtime-version 3.11 \
-  --functions-version 4 \
-  --os-type Linux
-
-# Configure app settings
-az functionapp config appsettings set \
-  --name $FUNC_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --settings \
-    "AZURE_OPENAI_ENDPOINT=${OPENAI_ENDPOINT}" \
-    "AZURE_OPENAI_API_VERSION=2025-01-01-preview" \
-    "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-deployment" \
-    "AZURE_STORAGE_ACCOUNT_NAME=${STORAGE_NAME}" \
-    "AZURE_FILES_SHARE_NAME=agents" \
-    "ASSISTANT_NAME=RAPP Agent"
-```
-
-**Assign RBAC roles to current user:**
 ```bash
 USER_ID=$(az ad signed-in-user show --query id -o tsv)
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 
-# Storage Blob Data Contributor
-az role assignment create \
-  --assignee $USER_ID \
+# Storage roles for local development
+az role assignment create --assignee $USER_ID \
   --role "Storage Blob Data Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}"
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
-# Storage File Data Privileged Contributor
-az role assignment create \
-  --assignee $USER_ID \
+az role assignment create --assignee $USER_ID \
   --role "Storage File Data Privileged Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}"
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
-# Cognitive Services OpenAI User
-az role assignment create \
-  --assignee $USER_ID \
+# OpenAI role
+az role assignment create --assignee $USER_ID \
   --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}"
-```
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}" -o none
 
-**Assign RBAC roles to Function App (for Azure deployment):**
-```bash
+# Function App identity + roles
 FUNC_IDENTITY=$(az functionapp identity assign --name $FUNC_NAME --resource-group $RESOURCE_GROUP --query principalId -o tsv)
 
-# Storage roles for Function App
-az role assignment create \
-  --assignee $FUNC_IDENTITY \
+az role assignment create --assignee $FUNC_IDENTITY \
   --role "Storage Blob Data Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}"
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
-az role assignment create \
-  --assignee $FUNC_IDENTITY \
+az role assignment create --assignee $FUNC_IDENTITY \
   --role "Storage File Data Privileged Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}"
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
-# OpenAI role for Function App
-az role assignment create \
-  --assignee $FUNC_IDENTITY \
+az role assignment create --assignee $FUNC_IDENTITY \
   --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}"
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}" -o none
 ```
 
-### Step 5: Configure local.settings.json
-
-Create the configuration file:
-```bash
-cat > local.settings.json << EOF
-{
-  "IsEncrypted": false,
-  "Values": {
-    "FUNCTIONS_WORKER_RUNTIME": "python",
-    "AzureWebJobsStorage__accountName": "${STORAGE_NAME}",
-    "AZURE_OPENAI_ENDPOINT": "${OPENAI_ENDPOINT}",
-    "AZURE_OPENAI_API_VERSION": "2025-01-01-preview",
-    "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-deployment",
-    "AZURE_STORAGE_ACCOUNT_NAME": "${STORAGE_NAME}",
-    "AZURE_FILES_SHARE_NAME": "agents",
-    "ASSISTANT_NAME": "RAPP Agent",
-    "CHARACTERISTIC_DESCRIPTION": "Rapid Agent Prototyping Platform assistant"
-  }
-}
-EOF
-```
-
-### Step 6: Install Dependencies
+### Step 10: Deploy the Function
 
 ```bash
-pip install -r requirements.txt
-```
-
-### Step 7: Start and Test
-
-Start the function:
-```bash
-func start
-```
-
-Wait for it to initialize (look for "Worker process started and initialized"), then test in a new terminal:
-```bash
-curl -X POST http://localhost:7071/api/businessinsightbot_function \
-  -H "Content-Type: application/json" \
-  -d '{"user_input": "Hello", "conversation_history": []}'
-```
-
-Expected response contains `"assistant_response"` with a greeting.
-
-### Step 8: Deploy to Azure
-
-Deploy the function app to Azure:
-```bash
+cd ~/.brainstem/src/rapp_brainstem
 func azure functionapp publish $FUNC_NAME --build remote
 ```
 
-Wait for deployment to complete (1-3 minutes). Verify the function is registered:
-```bash
-az functionapp function list --name $FUNC_NAME --resource-group $RESOURCE_GROUP -o table
-```
+Wait for deployment (1-3 minutes). Then verify:
 
-If functions list is empty, sync triggers and restart:
-```bash
-az rest --method POST --uri "https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FUNC_NAME}/syncfunctiontriggers?api-version=2022-03-01"
-az functionapp restart --name $FUNC_NAME --resource-group $RESOURCE_GROUP
-```
-
-Get the function key:
 ```bash
 FUNC_KEY=$(az functionapp keys list --name $FUNC_NAME --resource-group $RESOURCE_GROUP --query "functionKeys.default" -o tsv)
 FUNC_URL="https://${FUNC_NAME}.azurewebsites.net/api/businessinsightbot_function"
-```
 
-Test the deployed endpoint:
-```bash
-curl -X POST "${FUNC_URL}?code=${FUNC_KEY}" \
+curl -s -X POST "${FUNC_URL}?code=${FUNC_KEY}" \
   -H "Content-Type: application/json" \
-  -d '{"user_input": "Hello", "conversation_history": []}'
+  -d '{"user_input": "Hello", "conversation_history": []}' | python3 -m json.tool
 ```
 
-### Step 9: Generate RAPPid.json
-
-Create the RAPPid.json file that the frontend chat UI can import:
+If the functions list is empty after deploy:
 ```bash
-cat > RAPPid.json << EOF
+az functionapp restart --name $FUNC_NAME --resource-group $RESOURCE_GROUP
+```
+
+### Step 11: ⏸️ Tier 2 Complete
+
+Save the Azure state:
+```bash
+cat > ~/.config/brainstem/state.json << AZSTATE
 {
-  "endpoints": {
-    "rapp-azure": {
-      "id": "rapp-azure",
-      "name": "RAPP Agent (Azure)",
-      "url": "${FUNC_URL}",
-      "key": "${FUNC_KEY}",
-      "guid": "",
-      "active": true
-    }
+  "tier": 2,
+  "install_dir": "~/.brainstem/src/rapp_brainstem",
+  "local_url": "http://localhost:7071",
+  "azure": {
+    "resource_group": "${RESOURCE_GROUP}",
+    "function_app": "${FUNC_NAME}",
+    "function_url": "${FUNC_URL}",
+    "storage_account": "${STORAGE_NAME}",
+    "openai_service": "${OPENAI_NAME}"
   },
-  "settings": {
-    "theme": "system",
-    "voiceEnabled": false
-  }
+  "status": "deployed"
 }
-EOF
-echo "✅ Created RAPPid.json"
-cat RAPPid.json
+AZSTATE
 ```
 
 Tell the user:
 
-> **RAPPid.json created!** To connect your frontend:
-> 1. Open `index.html` in your browser
-> 2. Click the ⚙️ Settings icon
-> 3. Click "Import Settings"
-> 4. Select the `RAPPid.json` file
-> 5. Your Azure endpoint is now connected!
+> **☁️ Spinal cord connected!** Your brainstem is deployed to Azure.
+>
+> **Azure endpoint:** `https://${FUNC_NAME}.azurewebsites.net`
+>
+> **Resources created:**
+> | Resource | Name |
+> |----------|------|
+> | Resource Group | `${RESOURCE_GROUP}` |
+> | Function App | `${FUNC_NAME}` |
+> | Storage Account | `${STORAGE_NAME}` |
+> | Azure OpenAI | `${OPENAI_NAME}` |
+>
+> **What you just learned:**
+> - ARM template deployment
+> - Azure Functions with Python
+> - Managed identity and RBAC (no API keys!)
+> - Azure OpenAI service provisioning
+>
+> **When you're ready to connect this to Teams and M365 Copilot, say "connect to Copilot Studio" and I'll walk you through Tier 3.**
 
-### Step 10: Success Message
+**Do not proceed to Tier 3 unless the user asks.**
+
+---
+
+## 🤖 Tier 3: The Nervous System
+
+*Your nervous system extends your brain's reach everywhere — eyes, ears, hands. Copilot Studio does the same: it connects your agent to Teams, M365 Copilot, and across your organization. The same logic you tested locally now serves your entire tenant.*
+
+Only run this tier if the user asks to connect to Copilot Studio.
+
+### Step 12: ⏸️ Import the Power Platform Solution
 
 Tell the user:
 
+> **🤖 Let's give your brainstem a nervous system — connecting it to Teams and M365 Copilot.**
+>
+> The repo includes a Power Platform solution that creates a declarative agent in Copilot Studio wired to your Azure Function.
+>
+> **To import:**
+> 1. Open [make.powerapps.com](https://make.powerapps.com)
+> 2. Select your environment (top right)
+> 3. Go to **Solutions** → **Import solution**
+> 4. Upload `MSFTAIBASMultiAgentCopilot_1_0_0_5.zip` from `~/.brainstem/src/`
+> 5. Follow the import wizard — accept defaults
+>
+> Let me know when the import is done.
+
+### Step 13: ⏸️ Configure the Connector
+
+Read the saved Azure state:
+```bash
+cat ~/.config/brainstem/state.json
+```
+
+Tell the user:
+
+> **Now wire the Copilot Studio agent to your Azure Function:**
+>
+> 1. In Copilot Studio, open the imported solution
+> 2. Find the **HTTP action** (or custom connector) that calls the agent
+> 3. Set the endpoint URL to: `${FUNC_URL}`
+> 4. Add the function key as a query parameter: `?code=${FUNC_KEY}`
+> 5. Test the connection — send "Hello" and verify you get a response
+>
+> Let me know when it's connected.
+
+### Step 14: ⏸️ Publish to Your Organization
+
+Tell the user:
+
+> **Final step — publish your agent:**
+>
+> 1. In Copilot Studio, click **Publish**
+> 2. Choose your channels:
+>    - **Microsoft Teams** — your agent appears as a Teams bot
+>    - **M365 Copilot** — your agent appears as a plugin in Copilot
+> 3. Test it: open Teams and start a conversation with your agent
+>
+> The same agent logic you built and tested on your local brainstem is now live in your organization.
+
+### Step 15: Tier 3 Complete
+
+Update the state:
+```bash
+cat > ~/.config/brainstem/state.json << T3STATE
+{
+  "tier": 3,
+  "install_dir": "~/.brainstem/src/rapp_brainstem",
+  "local_url": "http://localhost:7071",
+  "azure": {
+    "resource_group": "${RESOURCE_GROUP}",
+    "function_app": "${FUNC_NAME}",
+    "function_url": "${FUNC_URL}",
+    "storage_account": "${STORAGE_NAME}",
+    "openai_service": "${OPENAI_NAME}"
+  },
+  "copilot_studio": true,
+  "status": "published"
+}
+T3STATE
+```
+
+Tell the user:
+
+> **🤖 Nervous system connected!** You've built the full stack.
+>
+> **What you learned across all 3 tiers:**
+>
+> | Tier | Layer | Skills |
+> |------|-------|--------|
+> | 🧠 Brainstem | Local | Python agents, function-calling, prompt engineering |
+> | ☁️ Spinal Cord | Azure | ARM templates, Functions, managed identity, RBAC |
+> | 🤖 Nervous System | M365 | Copilot Studio, declarative agents, Teams integration |
+>
+> **Your agent's journey:**
+> `soul.md` → `brainstem.py` → Azure Function → Copilot Studio → Teams/M365 Copilot
+>
+> From a local Python server to an enterprise AI agent, one layer at a time.
+
 ---
 
-✅ **RAPP Agent is deployed and ready!**
+## Cleanup
 
-**Local endpoint:** http://localhost:7071/api/businessinsightbot_function
-
-**Azure endpoint:** `https://{FUNC_NAME}.azurewebsites.net/api/businessinsightbot_function`
-
-**Web UI:** Open `index.html` in your browser, then import `RAPPid.json` from Settings
-
-**Azure Resources Created:**
-- Resource Group: `{RESOURCE_GROUP}`
-- Function App: `{FUNC_NAME}`
-- Storage Account: `{STORAGE_NAME}`
-- OpenAI Service: `{OPENAI_NAME}`
-
-**Files Generated:**
-- `local.settings.json` - Local dev configuration (do not commit)
-- `RAPPid.json` - Import into frontend to connect to Azure endpoint
-
-**Next steps:**
-1. Add custom agents in `agents/` folder
-2. See `CLAUDE.md` for architecture details
-3. Import `MSFTAIBASMultiAgentCopilot_*.zip` to Power Platform for Teams/M365 Copilot integration
-
----
-
-## Cleanup (Optional)
-
-To delete all created Azure resources:
+To remove Azure resources:
 ```bash
 az group delete --name $RESOURCE_GROUP --yes --no-wait
 ```
 
+To uninstall locally:
+```bash
+rm -rf ~/.brainstem ~/.local/bin/brainstem ~/.config/brainstem
+```
+
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| `az login` token expired | Run `az login` again |
-| Storage auth fails | Wait 1-2 min for RBAC to propagate, then restart `func start` |
-| OpenAI deployment fails | Try a different region (e.g., `eastus2` instead of `swedencentral`) |
-| Python version mismatch | Ensure Python 3.11 is used, not 3.13+ |
-| Functions list empty after deploy | Sync triggers and restart function app (see Step 8) |
-| Frontend not connecting | Re-import RAPPid.json, check browser console for CORS errors |
-| `--build remote` fails | Ensure storage account has public network access enabled |
+| Issue | Fix |
+|-------|-----|
+| `gh auth token` fails | Run `gh auth login` |
+| Python not 3.11+ | Install specifically: `brew install python@3.11` |
+| Port 7071 in use | Set `PORT=7072` in `.env` |
+| Storage auth fails after deploy | Wait 2 min for RBAC propagation, restart `func start` |
+| OpenAI deploy fails | Try different region: `eastus2` or `swedencentral` |
+| Functions list empty after deploy | `az functionapp restart --name $FUNC_NAME -g $RESOURCE_GROUP` |
+| Copilot Studio connector fails | Verify function key and URL are correct |
