@@ -1,1 +1,10 @@
 rapp-deployment-outputs.json
+rapp_brainstem/.copilot_token
+rapp_brainstem/.env
+rapp_brainstem/.brainstem_data/
+rapp_brainstem/.remote_agents/
+rapp_brainstem/.pytest_cache/
+rapp_brainstem/__pycache__/
+rapp_brainstem/agents/__pycache__/
+__pycache__/
+*.pyc

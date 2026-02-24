@@ -209,6 +209,86 @@ fi
 
 echo ""
 
+# ── onboarding agent tests ───────────────────────────────────────────────────
+
+echo "--- onboarding agent ---"
+
+if grep -q "OnboardingGuide" "$REPO_ROOT/rapp_brainstem/agents/hello_agent.py"; then
+    pass "onboarding agent has OnboardingGuide class"
+else
+    fail "onboarding agent missing OnboardingGuide class"
+fi
+
+if grep -q "skill.md" "$REPO_ROOT/rapp_brainstem/agents/hello_agent.py"; then
+    pass "onboarding agent reads skill.md"
+else
+    fail "onboarding agent should read skill.md"
+fi
+
+if grep -q "state.json" "$REPO_ROOT/rapp_brainstem/agents/hello_agent.py"; then
+    pass "onboarding agent reads saved state"
+else
+    fail "onboarding agent should read user progress state"
+fi
+
+# Test that the agent actually loads and runs
+AGENT_TEST=$(cd "$REPO_ROOT/rapp_brainstem" && python3 -c "
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath('.')))
+sys.path.insert(0, '.')
+from agents.hello_agent import OnboardingAgent
+a = OnboardingAgent()
+assert a.name == 'OnboardingGuide'
+tool = a.to_tool()
+assert tool['type'] == 'function'
+result = a.perform(topic='overview')
+assert 'Tier 1' in result and 'Tier 2' in result and 'Tier 3' in result
+result = a.perform(topic='agents')
+assert 'BasicAgent' in result
+result = a.perform(topic='next')
+assert len(result) > 0
+result = a.perform(topic='install')
+assert 'skill.md' in result and 'curl' in result and 'irm' in result
+print('ok')
+" 2>&1)
+if [ "$AGENT_TEST" = "ok" ]; then
+    pass "onboarding agent loads, runs, and returns correct content"
+else
+    fail "onboarding agent runtime test failed: $AGENT_TEST"
+fi
+
+echo ""
+
+# ── docs/ & tracking tests ───────────────────────────────────────────────────
+
+echo "--- docs & tracking ---"
+
+if [ -f "$REPO_ROOT/docs/index.html" ] && grep -q "Brainstem" "$REPO_ROOT/docs/index.html"; then
+    pass "docs/index.html has brainstem content"
+else
+    fail "docs/index.html missing or stale"
+fi
+
+if [ -f "$REPO_ROOT/docs/install.sh" ] && grep -q "brainstem" "$REPO_ROOT/docs/install.sh" -i; then
+    pass "docs/install.sh exists for GitHub Pages curl"
+else
+    fail "docs/install.sh missing (needed for curl one-liner via GitHub Pages)"
+fi
+
+if [ ! -f "$REPO_ROOT/docs/copilot-install.html" ]; then
+    pass "stale docs/copilot-install.html removed"
+else
+    fail "docs/copilot-install.html should be removed (stale)"
+fi
+
+if grep -q ".brainstem_data" "$REPO_ROOT/.gitignore" && grep -q ".remote_agents" "$REPO_ROOT/.gitignore"; then
+    pass ".gitignore excludes runtime artifacts"
+else
+    fail ".gitignore should exclude .brainstem_data/ and .remote_agents/"
+fi
+
+echo ""
+
 # ── unit tests ────────────────────────────────────────────────────────────────
 
 echo "--- unit tests (test_local_agents.py) ---"

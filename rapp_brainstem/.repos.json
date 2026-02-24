@@ -1,0 +1,10 @@
+{
+  "kody-w/AI-Agent-Templates": {
+    "enabled_agents": [
+      "context_memory_agent",
+      "manage_memory_agent",
+      "hacker_news_agent",
+      "duckduckgo_search_agent"
+    ]
+  }
+}
