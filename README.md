@@ -1,5 +1,7 @@
 # 🧠 RAPP Brainstem
 
+> **👉 [Get Started at kody-w.github.io/rapp-installer](https://kody-w.github.io/rapp-installer/)**
+
 A local-first AI agent server powered by GitHub Copilot. No API keys. No cloud setup. Just your GitHub account.
 
 ```
