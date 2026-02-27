@@ -2,9 +2,12 @@
   "kody-w/AI-Agent-Templates": {
     "enabled_agents": [
       "context_memory_agent",
-      "manage_memory_agent",
+      "duckduckgo_search_agent",
       "hacker_news_agent",
-      "duckduckgo_search_agent"
+      "powerpoint_agent",
+      "fetch_random_wikipedia_article_skill",
+      "manage_memory_agent",
+      "adaptive_card_agent"
     ]
   }
 }
