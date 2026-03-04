@@ -408,6 +408,7 @@
   let history = [];
 
   // Health check — also handles login state
+  let loginInProgress = false;
   async function checkHealth() {
     try {
       const r = await fetch(`${API}/health`);
@@ -416,12 +417,15 @@
         document.getElementById('dot').className = 'dot';
         document.getElementById('status-text').textContent = d.copilot ? 'copilot ✓' : 'online';
         document.getElementById('login-overlay').style.display = 'none';
+        loginInProgress = false;
         loadModels();
       } else {
-        // Not authenticated
+        // Not authenticated — but don't interrupt an active login flow
         document.getElementById('dot').className = 'dot offline';
         document.getElementById('status-text').textContent = 'not signed in';
-        document.getElementById('login-overlay').style.display = 'flex';
+        if (!loginInProgress) {
+          document.getElementById('login-overlay').style.display = 'flex';
+        }
       }
     } catch {
       document.getElementById('dot').className = 'dot offline';
@@ -429,15 +433,16 @@
     }
   }
   checkHealth();
-  setInterval(checkHealth, 10000);
+  setInterval(checkHealth, 30000);  // Poll less aggressively (30s instead of 10s)
 
   // Device code login
   async function startLogin() {
     try {
       document.querySelector('.login-btn').disabled = true;
+      loginInProgress = true;
       const r = await fetch(`${API}/login`, { method: 'POST' });
       const d = await r.json();
-      if (d.error) { alert(d.error); return; }
+      if (d.error) { alert(d.error); loginInProgress = false; return; }
 
       document.getElementById('login-step1').style.display = 'none';
       document.getElementById('login-step2').style.display = 'block';
@@ -451,6 +456,7 @@
       pollLogin();
     } catch (e) {
       alert('Failed to start login: ' + e.message);
+      loginInProgress = false;
       document.querySelector('.login-btn').disabled = false;
     }
   }
@@ -466,10 +472,16 @@
       if (d.status === 'ok') {
         document.getElementById('login-step2').style.display = 'none';
         document.getElementById('login-step3').style.display = 'block';
-        setTimeout(() => {
-          document.getElementById('login-overlay').style.display = 'none';
-          checkHealth();
-        }, 1500);
+        // Give the server a moment to process, then verify via health check
+        setTimeout(async () => {
+          loginInProgress = false;
+          await checkHealth();
+          // If health check confirmed OK, overlay is already hidden.
+          // If not, give it one more try after a short delay.
+          if (document.getElementById('login-overlay').style.display !== 'none') {
+            setTimeout(checkHealth, 3000);
+          }
+        }, 2000);
         return;
       }
       // Still pending — poll again

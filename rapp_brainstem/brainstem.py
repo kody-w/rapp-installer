@@ -56,6 +56,24 @@ AVAILABLE_MODELS = [
 # GitHub Copilot VS Code extension client ID (same as openrappter)
 COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 _token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".copilot_token")
+_copilot_cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".copilot_session")
+
+def _read_token_file():
+    """Read the token file. Returns dict with at least 'access_token', or None."""
+    if not os.path.exists(_token_file):
+        return None
+    try:
+        with open(_token_file) as f:
+            raw = f.read().strip()
+        if not raw:
+            return None
+        # New JSON format: {"access_token": ..., "refresh_token": ...}
+        if raw.startswith("{"):
+            return json.loads(raw)
+        # Legacy plain-text format: just the token string
+        return {"access_token": raw}
+    except Exception:
+        return None
 
 def get_github_token():
     """Get GitHub token from env, saved file, or gh CLI."""
@@ -64,11 +82,9 @@ def get_github_token():
     if token:
         return token
     # 2. Saved token from device code login
-    if os.path.exists(_token_file):
-        with open(_token_file) as f:
-            token = f.read().strip()
-            if token:
-                return token
+    data = _read_token_file()
+    if data and data.get("access_token"):
+        return data["access_token"]
     # 3. gh CLI
     try:
         env = os.environ.copy()
@@ -97,28 +113,74 @@ def get_github_token():
         pass
     return None
 
-def save_github_token(token):
-    """Persist token for reuse across restarts."""
+def save_github_token(token, refresh_token=None):
+    """Persist token (and optional refresh token) for reuse across restarts."""
+    # Preserve existing refresh_token if we're only updating the access_token
+    existing = _read_token_file() or {}
+    data = {
+        "access_token": token,
+        "refresh_token": refresh_token or existing.get("refresh_token"),
+        "saved_at": time.time(),
+    }
     with open(_token_file, "w") as f:
-        f.write(token)
+        json.dump(data, f)
+    print(f"[brainstem] GitHub token saved (prefix: {token[:4]}...)")
+
+def refresh_github_token():
+    """Try to refresh an expired GitHub token using the stored refresh_token."""
+    data = _read_token_file()
+    if not data or not data.get("refresh_token"):
+        return None
+    try:
+        resp = requests.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+            data=(
+                f"client_id={COPILOT_CLIENT_ID}"
+                f"&grant_type=refresh_token"
+                f"&refresh_token={data['refresh_token']}"
+            ),
+            timeout=10,
+        )
+        result = resp.json()
+        if result.get("access_token"):
+            new_token = result["access_token"]
+            new_refresh = result.get("refresh_token", data.get("refresh_token"))
+            save_github_token(new_token, new_refresh)
+            print(f"[brainstem] GitHub token refreshed successfully")
+            return new_token
+        print(f"[brainstem] Token refresh failed: {result.get('error', 'unknown')}")
+    except Exception as e:
+        print(f"[brainstem] Token refresh error: {e}")
+    return None
+
+def _load_copilot_cache():
+    """Load cached Copilot API token from disk."""
+    if not os.path.exists(_copilot_cache_file):
+        return None
+    try:
+        with open(_copilot_cache_file) as f:
+            data = json.load(f)
+        if data.get("token") and time.time() < data.get("expires_at", 0) - 60:
+            return data
+    except Exception:
+        pass
+    return None
+
+def _save_copilot_cache(token, endpoint, expires_at):
+    """Cache Copilot API token to disk so it survives restarts."""
+    try:
+        with open(_copilot_cache_file, "w") as f:
+            json.dump({"token": token, "endpoint": endpoint, "expires_at": expires_at}, f)
+    except Exception:
+        pass
 
 # ── Copilot token exchange ────────────────────────────────────────────────────
 
 _copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
 
-def get_copilot_token():
-    """Exchange GitHub token for a short-lived Copilot API token."""
-    global _copilot_token_cache
-    
-    # Return cached token if still valid (with 60s buffer)
-    if _copilot_token_cache["token"] and time.time() < _copilot_token_cache["expires_at"] - 60:
-        return _copilot_token_cache["token"], _copilot_token_cache["endpoint"]
-    
-    github_token = get_github_token()
-    if not github_token:
-        raise RuntimeError("Not authenticated. Visit /login in your browser to sign in with GitHub.")
-    
-    # ghu_ tokens from device code OAuth use "token" auth, others use "Bearer"
+def _exchange_github_for_copilot(github_token):
+    """Exchange a GitHub token for a Copilot API token. Returns (token, endpoint, expires_at) or raises."""
     auth_prefix = "token" if github_token.startswith("ghu_") else "Bearer"
     resp = requests.get(
         COPILOT_TOKEN_URL,
@@ -130,12 +192,48 @@ def get_copilot_token():
         },
         timeout=10,
     )
+    return resp
+
+def get_copilot_token():
+    """Exchange GitHub token for a short-lived Copilot API token."""
+    global _copilot_token_cache
     
+    # 1. Return in-memory cached token if still valid (with 60s buffer)
+    if _copilot_token_cache["token"] and time.time() < _copilot_token_cache["expires_at"] - 60:
+        return _copilot_token_cache["token"], _copilot_token_cache["endpoint"]
+    
+    # 2. Try disk-cached Copilot session token (survives restarts)
+    disk_cache = _load_copilot_cache()
+    if disk_cache:
+        _copilot_token_cache = disk_cache
+        print(f"[brainstem] Copilot token restored from cache (expires in {int(disk_cache['expires_at'] - time.time())}s)")
+        return disk_cache["token"], disk_cache["endpoint"]
+    
+    # 3. Exchange GitHub token for Copilot token
+    github_token = get_github_token()
+    if not github_token:
+        raise RuntimeError("Not authenticated. Visit /login in your browser to sign in with GitHub.")
+    
+    resp = _exchange_github_for_copilot(github_token)
+    
+    # 4. If 401, the GitHub token may have expired — try refreshing it
     if resp.status_code in (401, 404):
-        raise RuntimeError(
-            "GitHub token doesn't have Copilot access. "
-            "Visit /login in your browser to authenticate with GitHub Copilot."
-        )
+        refreshed = refresh_github_token()
+        if refreshed:
+            resp = _exchange_github_for_copilot(refreshed)
+        if resp.status_code in (401, 404):
+            # Only clear the token file if there's no refresh_token to try later
+            token_data = _read_token_file()
+            has_refresh = token_data and token_data.get("refresh_token")
+            if not has_refresh and os.path.exists(_token_file):
+                os.remove(_token_file)
+                print("[brainstem] Cleared expired token file (no refresh token available)")
+            elif has_refresh:
+                print("[brainstem] Copilot exchange failed but keeping token file (has refresh token)")
+            raise RuntimeError(
+                "GitHub token doesn't have Copilot access yet. "
+                "Visit /login in your browser to authenticate with GitHub Copilot."
+            )
     resp.raise_for_status()
     
     data = resp.json()
@@ -151,6 +249,7 @@ def get_copilot_token():
         "endpoint": endpoint,
         "expires_at": expires_at,
     }
+    _save_copilot_cache(copilot_token, endpoint, expires_at)
     
     print(f"[brainstem] Copilot token refreshed (expires in {int(expires_at - time.time())}s)")
     return copilot_token, endpoint
@@ -200,7 +299,8 @@ def poll_device_code():
     
     if data.get("access_token"):
         token = data["access_token"]
-        save_github_token(token)
+        refresh = data.get("refresh_token")
+        save_github_token(token, refresh)
         _pending_login = {}
         return token
     
@@ -700,15 +800,18 @@ def login_poll():
     try:
         token = poll_device_code()
         if token:
-            # Validate against Copilot
-            try:
-                get_copilot_token()
-                return jsonify({"status": "ok", "message": "Authenticated with GitHub Copilot!"})
-            except Exception:
-                return jsonify({"status": "ok", "message": "Authenticated (Copilot validation pending)"})
+            # Token saved — don't validate against Copilot here to avoid
+            # race conditions that could delete the freshly saved token.
+            # The next health check will validate it.
+            return jsonify({"status": "ok", "message": "Authenticated with GitHub Copilot!"})
         return jsonify({"status": "pending"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/login/status", methods=["GET"])
+def login_status():
+    """Check if a login flow is currently in progress."""
+    return jsonify({"pending": bool(_pending_login)})
 
 @app.route("/models", methods=["GET"])
 def list_models():
