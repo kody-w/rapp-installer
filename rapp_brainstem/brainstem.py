@@ -338,7 +338,6 @@ def load_soul():
 
 # ── Agent loader ──────────────────────────────────────────────────────────────
 
-_agents_cache = None
 
 def _load_agent_from_file(filepath):
     """Load agent classes from a single .py file. Returns dict of name→instance.
@@ -472,14 +471,9 @@ def _auto_install(package):
         print(f"[brainstem] Failed to install {package}: {e}")
 
 def load_agents():
-    global _agents_cache
-    if _agents_cache is not None:
-        return _agents_cache
-
     agents = {}
-    pattern = os.path.join(AGENTS_PATH, "**", "*_agent.py")
-    files = glob.glob(pattern, recursive=True) + glob.glob(os.path.join(AGENTS_PATH, "*_agent.py"))
-    files = list(set(files))
+    pattern = os.path.join(AGENTS_PATH, "*_agent.py")
+    files = glob.glob(pattern)
 
     for filepath in files:
         loaded = _load_agent_from_file(filepath)
@@ -487,15 +481,8 @@ def load_agents():
             agents[name] = instance
             print(f"[brainstem] Agent loaded: {name}")
 
-    _agents_cache = agents
     print(f"[brainstem] {len(agents)} agent(s) ready.")
     return agents
-
-def reload_agents():
-    """Force reload all agents."""
-    global _agents_cache
-    _agents_cache = None
-    return load_agents()
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
