@@ -40,6 +40,9 @@ AGENTS_PATH = os.getenv("AGENTS_PATH", os.path.join(os.path.dirname(__file__), "
 MODEL       = os.getenv("GITHUB_MODEL", "gpt-4o")
 PORT        = int(os.getenv("PORT", 7071))
 
+_version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+VERSION = open(_version_file).read().strip() if os.path.exists(_version_file) else "0.0.0"
+
 COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 
 AVAILABLE_MODELS = [
@@ -336,10 +339,6 @@ def load_soul():
 # ── Agent loader ──────────────────────────────────────────────────────────────
 
 _agents_cache = None
-_remote_agents = {}  # name → instance (hot-loaded from repos)
-_connected_repos = {}  # url → {manifest, enabled_agents}
-_remote_agents_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".remote_agents")
-_repos_config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".repos.json")
 
 def _load_agent_from_file(filepath):
     """Load agent classes from a single .py file. Returns dict of name→instance.
@@ -386,7 +385,7 @@ def _load_agent_from_file(filepath):
 _shims_registered = False
 
 def _register_shims():
-    """Register local shims for cloud dependencies so remote agents import them transparently."""
+    """Register local shims for cloud dependencies so agents import them transparently."""
     global _shims_registered
     if _shims_registered:
         return
@@ -490,16 +489,6 @@ def load_agents():
 
     _agents_cache = agents
     print(f"[brainstem] {len(agents)} agent(s) ready.")
-    
-    # Restore saved repos
-    _restore_repos()
-    
-    return agents
-
-def get_all_agents():
-    """Get local + remote agents combined."""
-    agents = dict(load_agents())
-    agents.update(_remote_agents)
     return agents
 
 def reload_agents():
@@ -507,173 +496,6 @@ def reload_agents():
     global _agents_cache
     _agents_cache = None
     return load_agents()
-
-# ── Remote repo agent loading ────────────────────────────────────────────────
-
-def _save_repos():
-    """Persist connected repos to disk."""
-    data = {}
-    for url, info in _connected_repos.items():
-        data[url] = {"enabled_agents": list(info.get("enabled_agents", []))}
-    with open(_repos_config_file, "w") as f:
-        json.dump(data, f, indent=2)
-
-def _restore_repos():
-    """Restore previously connected repos on startup."""
-    if not os.path.exists(_repos_config_file):
-        return
-    try:
-        with open(_repos_config_file) as f:
-            data = json.load(f)
-        for url, info in data.items():
-            try:
-                manifest = _fetch_repo_manifest(url)
-                _connected_repos[url] = {
-                    "manifest": manifest,
-                    "enabled_agents": set(info.get("enabled_agents", []))
-                }
-                # Re-enable previously enabled agents
-                for agent_id in info.get("enabled_agents", []):
-                    _install_remote_agent(url, agent_id, manifest)
-                print(f"[brainstem] Restored repo: {url} ({len(info.get('enabled_agents', []))} agents)")
-            except Exception as e:
-                print(f"[brainstem] Failed to restore repo {url}: {e}")
-    except Exception as e:
-        print(f"[brainstem] Failed to load repos config: {e}")
-
-def _normalize_repo_url(url):
-    """Convert various GitHub URL formats to owner/repo."""
-    url = url.strip().rstrip("/")
-    # Handle full URLs
-    for prefix in ["https://github.com/", "http://github.com/", "github.com/"]:
-        if url.startswith(prefix):
-            url = url[len(prefix):]
-    # Handle GitHub Pages URLs like kody-w.github.io/AI-Agent-Templates
-    if ".github.io/" in url:
-        parts = url.split(".github.io/")
-        owner = parts[0].replace("https://", "").replace("http://", "")
-        repo = parts[1].split("/")[0] if "/" in parts[1] else parts[1]
-        return f"{owner}/{repo}"
-    # Already owner/repo
-    parts = url.split("/")
-    if len(parts) >= 2:
-        return f"{parts[0]}/{parts[1]}"
-    return url
-
-def _fetch_repo_manifest(repo_url):
-    """Fetch manifest.json or build one from agents/ directory listing."""
-    owner_repo = _normalize_repo_url(repo_url)
-    
-    # Try manifest.json first
-    manifest_url = f"https://raw.githubusercontent.com/{owner_repo}/main/manifest.json"
-    resp = requests.get(manifest_url, timeout=10)
-    if resp.status_code == 200:
-        return resp.json()
-    
-    # Try agents/index.json
-    index_url = f"https://raw.githubusercontent.com/{owner_repo}/main/agents/index.json"
-    resp = requests.get(index_url, timeout=10)
-    if resp.status_code == 200:
-        index = resp.json()
-        agents = []
-        for filename in index.get("agents", []):
-            if filename == "basic_agent.py":
-                continue
-            agent_id = filename.replace(".py", "")
-            agents.append({
-                "id": agent_id,
-                "name": agent_id.replace("_", " ").title(),
-                "filename": filename,
-                "path": f"agents/{filename}",
-                "url": f"https://raw.githubusercontent.com/{owner_repo}/main/agents/{filename}",
-            })
-        return {"agents": agents, "repository": owner_repo}
-    
-    # Try GitHub API to list agents/ directory
-    api_url = f"https://api.github.com/repos/{owner_repo}/contents/agents"
-    resp = requests.get(api_url, timeout=10)
-    if resp.status_code == 200:
-        files = resp.json()
-        agents = []
-        for f in files:
-            if f["name"].endswith("_agent.py") and f["name"] != "basic_agent.py":
-                agent_id = f["name"].replace(".py", "")
-                agents.append({
-                    "id": agent_id,
-                    "name": agent_id.replace("_", " ").title(),
-                    "filename": f["name"],
-                    "path": f"agents/{f['name']}",
-                    "url": f["download_url"],
-                })
-        return {"agents": agents, "repository": owner_repo}
-    
-    raise RuntimeError(f"Could not fetch agents from {owner_repo}. Make sure it has agents/ directory or manifest.json.")
-
-def _install_remote_agent(repo_url, agent_id, manifest):
-    """Download and hot-load a single agent from a remote repo."""
-    global _remote_agents
-    
-    agent_info = None
-    for a in manifest.get("agents", []):
-        if a["id"] == agent_id:
-            agent_info = a
-            break
-    if not agent_info:
-        raise RuntimeError(f"Agent '{agent_id}' not found in manifest")
-    
-    # Download agent file
-    os.makedirs(_remote_agents_dir, exist_ok=True)
-    
-    # Also ensure basic_agent.py is available
-    owner_repo = _normalize_repo_url(repo_url)
-    basic_path = os.path.join(_remote_agents_dir, "basic_agent.py")
-    if not os.path.exists(basic_path):
-        # Copy local basic_agent.py
-        local_basic = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basic_agent.py")
-        if os.path.exists(local_basic):
-            import shutil
-            shutil.copy2(local_basic, basic_path)
-    
-    # Add remote agents dir to sys.path
-    if _remote_agents_dir not in sys.path:
-        sys.path.insert(0, _remote_agents_dir)
-    
-    url = agent_info.get("url")
-    if not url:
-        url = f"https://raw.githubusercontent.com/{owner_repo}/main/{agent_info['path']}"
-    
-    filepath = os.path.join(_remote_agents_dir, agent_info["filename"])
-    resp = requests.get(url, timeout=15)
-    resp.raise_for_status()
-    with open(filepath, "w") as f:
-        f.write(resp.text)
-    
-    # Hot-load
-    loaded = _load_agent_from_file(filepath)
-    _remote_agents.update(loaded)
-    print(f"[brainstem] Remote agent installed: {list(loaded.keys())} from {owner_repo}")
-    return list(loaded.keys())
-
-def _uninstall_remote_agent(agent_id, manifest):
-    """Remove a remote agent."""
-    global _remote_agents
-    agent_info = None
-    for a in manifest.get("agents", []):
-        if a["id"] == agent_id:
-            agent_info = a
-            break
-    if not agent_info:
-        return
-    
-    # Remove from loaded agents
-    filepath = os.path.join(_remote_agents_dir, agent_info["filename"])
-    loaded = _load_agent_from_file(filepath) if os.path.exists(filepath) else {}
-    for name in loaded:
-        _remote_agents.pop(name, None)
-    
-    # Remove file
-    if os.path.exists(filepath):
-        os.remove(filepath)
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
@@ -746,7 +568,7 @@ def chat():
 
     try:
         soul   = load_soul()
-        agents = get_all_agents()
+        agents = load_agents()
         tools  = [a.to_tool() for a in agents.values()] if agents else None
 
         messages = [{"role": "system", "content": soul}]
@@ -830,99 +652,16 @@ def set_model():
     MODEL = new_model
     return jsonify({"model": MODEL})
 
-@app.route("/repos", methods=["GET"])
-def list_repos():
-    """List connected repos and their agents."""
-    result = []
-    for url, info in _connected_repos.items():
-        manifest = info.get("manifest", {})
-        enabled = info.get("enabled_agents", set())
-        agents = []
-        for a in manifest.get("agents", []):
-            agents.append({
-                "id": a["id"],
-                "name": a.get("name", a["id"]),
-                "description": a.get("description", ""),
-                "enabled": a["id"] in enabled,
-            })
-        result.append({
-            "url": url,
-            "repo": manifest.get("repository", url),
-            "agents": agents,
-            "enabled_count": len(enabled),
-        })
-    return jsonify({"repos": result})
-
-@app.route("/repos/connect", methods=["POST"])
-def connect_repo():
-    """Connect a remote repo and fetch its agent manifest."""
-    data = request.get_json(force=True) or {}
-    url = data.get("url", "").strip()
-    if not url:
-        return jsonify({"error": "url is required"}), 400
-    try:
-        manifest = _fetch_repo_manifest(url)
-        normalized = _normalize_repo_url(url)
-        _connected_repos[normalized] = {
-            "manifest": manifest,
-            "enabled_agents": set(),
-        }
-        _save_repos()
-        agents = [{"id": a["id"], "name": a.get("name", a["id"]),
-                    "description": a.get("description", ""), "enabled": False}
-                   for a in manifest.get("agents", [])]
-        return jsonify({"repo": normalized, "agents": agents})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/repos/disconnect", methods=["POST"])
-def disconnect_repo():
-    """Disconnect a repo and unload its agents."""
-    data = request.get_json(force=True) or {}
-    url = _normalize_repo_url(data.get("url", ""))
-    info = _connected_repos.pop(url, None)
-    if info:
-        manifest = info.get("manifest", {})
-        for agent_id in list(info.get("enabled_agents", [])):
-            _uninstall_remote_agent(agent_id, manifest)
-    _save_repos()
-    return jsonify({"status": "ok"})
-
-@app.route("/repos/toggle", methods=["POST"])
-def toggle_agent():
-    """Enable or disable a remote agent."""
-    data = request.get_json(force=True) or {}
-    url = _normalize_repo_url(data.get("url", ""))
-    agent_id = data.get("agent_id", "")
-    enable = data.get("enable", True)
-
-    info = _connected_repos.get(url)
-    if not info:
-        return jsonify({"error": f"Repo '{url}' not connected"}), 400
-
-    manifest = info.get("manifest", {})
-    enabled = info.get("enabled_agents", set())
-
-    try:
-        if enable and agent_id not in enabled:
-            names = _install_remote_agent(url, agent_id, manifest)
-            enabled.add(agent_id)
-            _save_repos()
-            return jsonify({"status": "enabled", "loaded": names})
-        elif not enable and agent_id in enabled:
-            _uninstall_remote_agent(agent_id, manifest)
-            enabled.discard(agent_id)
-            _save_repos()
-            return jsonify({"status": "disabled"})
-        return jsonify({"status": "no_change"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route("/version", methods=["GET"])
+def version():
+    """Return the current brainstem version."""
+    return jsonify({"version": VERSION})
 
 @app.route("/health", methods=["GET"])
 def health():
     agents = {}
     try:
-        agents = get_all_agents()
+        agents = load_agents()
     except Exception:
         pass
     soul_ok = os.path.exists(SOUL_PATH)
@@ -931,6 +670,7 @@ def health():
         copilot_token, endpoint = get_copilot_token()
         return jsonify({
             "status": "ok",
+            "version": VERSION,
             "model":  MODEL,
             "soul":   SOUL_PATH if soul_ok else "missing",
             "agents": list(agents.keys()),
@@ -951,7 +691,7 @@ def health():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"\n🧠 RAPP Brainstem starting on http://localhost:{PORT}")
+    print(f"\n🧠 RAPP Brainstem v{VERSION} starting on http://localhost:{PORT}")
     print(f"   Soul:   {SOUL_PATH}")
     print(f"   Agents: {AGENTS_PATH}")
     print(f"   Model:  {MODEL}")

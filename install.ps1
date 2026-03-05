@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $BRAINSTEM_HOME = "$env:USERPROFILE\.brainstem"
 $BRAINSTEM_BIN = "$env:USERPROFILE\.local\bin"
 $REPO_URL = "https://github.com/kody-w/rapp-installer.git"
+$REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
 
 function Print-Banner {
     Write-Host ""
@@ -15,6 +16,55 @@ function Print-Banner {
     Write-Host "  Local-first AI agent server" -ForegroundColor Gray
     Write-Host "  Powered by GitHub Copilot — no API keys needed" -ForegroundColor Gray
     Write-Host ""
+}
+
+function Compare-SemVer {
+    param([string]$Local, [string]$Remote)
+    $lParts = $Local.Split('.')
+    $rParts = $Remote.Split('.')
+    for ($i = 0; $i -lt [Math]::Max($lParts.Length, $rParts.Length); $i++) {
+        $lv = if ($i -lt $lParts.Length) { [int]$lParts[$i] } else { 0 }
+        $rv = if ($i -lt $rParts.Length) { [int]$rParts[$i] } else { 0 }
+        if ($rv -gt $lv) { return 1 }   # remote is newer
+        if ($rv -lt $lv) { return -1 }  # local is newer
+    }
+    return 0  # equal
+}
+
+function Check-ForUpgrade {
+    $versionFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
+
+    if (-not (Test-Path $versionFile)) { return $true }
+
+    $localVersion = (Get-Content $versionFile -Raw).Trim()
+
+    try {
+        $remoteVersion = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 10).Content.Trim()
+    } catch {
+        Write-Host "  [!] Could not check remote version — upgrading anyway" -ForegroundColor Yellow
+        return $true
+    }
+
+    Write-Host "  Local version:  $localVersion" -ForegroundColor Cyan
+    Write-Host "  Remote version: $remoteVersion" -ForegroundColor Cyan
+
+    if ($localVersion -eq $remoteVersion) {
+        Write-Host ""
+        Write-Host "  [OK] Already up to date (v$localVersion)" -ForegroundColor Green
+        Write-Host ""
+        return $false
+    }
+
+    $cmp = Compare-SemVer -Local $localVersion -Remote $remoteVersion
+    if ($cmp -eq 1) {
+        Write-Host "  [..] Upgrade available: $localVersion -> $remoteVersion" -ForegroundColor Yellow
+        return $true
+    }
+
+    Write-Host ""
+    Write-Host "  [OK] Already up to date (v$localVersion)" -ForegroundColor Green
+    Write-Host ""
+    return $false
 }
 
 function Install-WithWinget {
@@ -175,15 +225,28 @@ function Create-Env {
 
 function Main {
     Print-Banner
+
+    # Check if this is an upgrade of an existing install
+    if (Test-Path "$BRAINSTEM_HOME\src\.git") {
+        Write-Host "Checking for updates..."
+        if (-not (Check-ForUpgrade)) {
+            return
+        }
+    }
+
     Check-Prerequisites
     Install-Brainstem
     Setup-Dependencies
     Install-CLI
     Create-Env
 
+    $installedVersion = ""
+    $vf = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
+    if (Test-Path $vf) { $installedVersion = (Get-Content $vf -Raw).Trim() }
+
     Write-Host ""
     Write-Host "===================================================" -ForegroundColor Cyan
-    Write-Host "  [OK] RAPP Brainstem installed!" -ForegroundColor Green
+    Write-Host "  [OK] RAPP Brainstem v$installedVersion installed!" -ForegroundColor Green
     Write-Host "===================================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  Get started:"

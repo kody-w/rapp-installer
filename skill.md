@@ -1,9 +1,9 @@
 ---
 name: rapp-brainstem
 version: 1.0.0
-description: Install and configure RAPP Brainstem — a local-first AI agent server powered by GitHub Copilot.
+description: Install and configure RAPP Brainstem -- a local-first AI agent server powered by GitHub Copilot.
 homepage: https://kody-w.github.io/rapp-installer/
-metadata: {"emoji":"🧠","category":"ai-agents","repo":"https://github.com/kody-w/rapp-installer"}
+metadata: {"emoji":"","category":"ai-agents","repo":"https://github.com/kody-w/rapp-installer"}
 ---
 
 # RAPP Brainstem
@@ -14,23 +14,23 @@ The brainstem teaches you the Microsoft AI stack one layer at a time:
 
 | Tier | Metaphor | What it does |
 |------|----------|-------------|
-| 🧠 **Brainstem** | Survival basics | Local agent server — soul, tools, conversation |
-| ☁️ **Spinal Cord** | Cloud body | Deploy to Azure — always-on, persistent storage |
-| 🤖 **Nervous System** | Enterprise reach | Copilot Studio — Teams, M365 Copilot |
+| **Brainstem** | Survival basics | Local agent server -- soul, tools, conversation |
+| **Spinal Cord** | Cloud body | Deploy to Azure -- always-on, persistent storage |
+| **Nervous System** | Enterprise reach | Copilot Studio -- Teams, M365 Copilot |
 
 Each tier builds on the last. Start with Tier 1. Layer up when the user is ready.
 
 ## Instructions for Copilot
 
-Execute these steps autonomously. Only pause and ask the user when marked with ⏸️.
+Execute these steps autonomously. Only pause and ask the user when marked with .
 
 After completing each tier, tell the user what they just learned and offer the next tier. Do not proceed to the next tier unless the user asks.
 
 ---
 
-## 🧠 Tier 1: The Brainstem
+## Tier 1: The Brainstem
 
-*The biological brainstem keeps you alive — breathing, heartbeat, reflexes. This tier does the same for your AI: it runs the core agent loop, calls tools, and responds. Everything else builds on top of this.*
+*The biological brainstem keeps you alive -- breathing, heartbeat, reflexes. This tier does the same for your AI: it runs the core agent loop, calls tools, and responds. Everything else builds on top of this.*
 
 ### Step 1: Check the Environment
 
@@ -43,7 +43,7 @@ git --version 2>/dev/null
 gh --version 2>/dev/null
 ```
 
-**On Windows**, skip all manual prereq checks — the PowerShell installer handles everything automatically:
+**On Windows**, skip all manual prereq checks -- the PowerShell installer handles everything automatically:
 ```powershell
 irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
 ```
@@ -62,11 +62,11 @@ It auto-installs Python 3.11, Git, and GitHub CLI via winget on a factory Window
 - Ubuntu/Debian: `sudo apt install gh`
 - Windows: `winget install GitHub.cli`
 
-### Step 2: ⏸️ GitHub Authentication
+### Step 2: GitHub Authentication
 
 Tell the user:
 
-> **🧠 The brainstem uses your GitHub Copilot subscription as its AI engine — no API keys needed.**
+> ** The brainstem uses your GitHub Copilot subscription as its AI engine -- no API keys needed.**
 >
 > Run this to authenticate:
 > ```
@@ -76,7 +76,7 @@ Tell the user:
 
 After they confirm, verify:
 ```bash
-gh auth token >/dev/null 2>&1 && echo "✓ authenticated" || echo "✗ not authenticated"
+gh auth token >/dev/null 2>&1 && echo "yes authenticated" || echo "no not authenticated"
 ```
 
 ### Step 3: Install the Brainstem
@@ -127,28 +127,28 @@ Expected response contains `"status": "ok"` with model and agent info.
 Test a conversation:
 ```bash
 curl -s -X POST http://localhost:7071/chat \
-  -H "Content-Type: application/json" \
-  -d '{"user_input": "Hello! What can you do?"}' | python3 -m json.tool
+ -H "Content-Type: application/json" \
+ -d '{"user_input": "Hello! What can you do?"}' | python3 -m json.tool
 ```
 
-### Step 5: ⏸️ Tier 1 Complete
+### Step 5: Tier 1 Complete
 
 Tell the user:
 
-> **🧠 Your brainstem is alive!**
+> ** Your brainstem is alive!**
 >
 > Open **http://localhost:7071** in your browser for the chat UI.
 >
 > **What you just set up:**
 > - A local AI agent server with tool-calling and conversation
-> - GitHub Copilot powers the AI — no API keys, no monthly bills
+> - GitHub Copilot powers the AI -- no API keys, no monthly bills
 > - Agents auto-discovered from the `agents/` folder
 > - Soul file (`soul.md`) defines the personality
 >
 > **Try these next:**
 > - Edit `~/.brainstem/src/rapp_brainstem/soul.md` to change the personality
 > - Look at `agents/hello_agent.py` as a template for your own agents
-> - Open the ⚡ Sources panel in the chat UI to connect remote agent repos
+> - Open the Sources panel in the chat UI to connect remote agent repos
 >
 > **When you're ready to give this a cloud body, say "deploy to Azure" and I'll walk you through Tier 2.**
 
@@ -157,10 +157,10 @@ Save the install state for future reference:
 mkdir -p ~/.config/brainstem
 cat > ~/.config/brainstem/state.json << 'STATE'
 {
-  "tier": 1,
-  "install_dir": "~/.brainstem/src/rapp_brainstem",
-  "local_url": "http://localhost:7071",
-  "status": "running"
+ "tier": 1,
+ "install_dir": "~/.brainstem/src/rapp_brainstem",
+ "local_url": "http://localhost:7071",
+ "status": "running"
 }
 STATE
 ```
@@ -169,9 +169,9 @@ STATE
 
 ---
 
-## ☁️ Tier 2: The Spinal Cord
+## Tier 2: The Spinal Cord
 
-*The spinal cord connects your brainstem to the rest of your body. Deploying to Azure does the same — your agent is now always-on, reachable from anywhere, with persistent storage and monitoring.*
+*The spinal cord connects your brainstem to the rest of your body. Deploying to Azure does the same -- your agent is now always-on, reachable from anywhere, with persistent storage and monitoring.*
 
 Only run this tier if the user asks to deploy to Azure.
 
@@ -192,11 +192,11 @@ func --version 2>/dev/null
 npm install -g azure-functions-core-tools@4 --unsafe-perm true
 ```
 
-### Step 7: ⏸️ Azure Authentication
+### Step 7: Azure Authentication
 
 Tell the user:
 
-> **☁️ Let's give your brainstem a cloud body.**
+> ** Let's give your brainstem a cloud body.**
 >
 > Run `az login` and complete the browser authentication. Let me know when you're done.
 
@@ -226,13 +226,13 @@ LOCATION="eastus2"
 az group create --name $RESOURCE_GROUP --location $LOCATION -o none
 
 az deployment group create \
-  --resource-group $RESOURCE_GROUP \
-  --template-uri https://raw.githubusercontent.com/kody-w/rapp-installer/main/azuredeploy.json \
-  --parameters openAILocation=swedencentral \
-  -o none
+ --resource-group $RESOURCE_GROUP \
+ --template-uri https://raw.githubusercontent.com/kody-w/rapp-installer/main/azuredeploy.json \
+ --parameters openAILocation=swedencentral \
+ -o none
 ```
 
-This creates: Function App (Python 3.11), Azure OpenAI (GPT-4o), Storage Account, Application Insights. All using Entra ID auth — no API keys.
+This creates: Function App (Python 3.11), Azure OpenAI (GPT-4o), Storage Account, Application Insights. All using Entra ID auth -- no API keys.
 
 Get the resource names:
 ```bash
@@ -249,32 +249,32 @@ USER_ID=$(az ad signed-in-user show --query id -o tsv)
 
 # Storage roles for local development
 az role assignment create --assignee $USER_ID \
-  --role "Storage Blob Data Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
+ --role "Storage Blob Data Contributor" \
+ --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
 az role assignment create --assignee $USER_ID \
-  --role "Storage File Data Privileged Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
+ --role "Storage File Data Privileged Contributor" \
+ --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
 # OpenAI role
 az role assignment create --assignee $USER_ID \
-  --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}" -o none
+ --role "Cognitive Services OpenAI User" \
+ --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}" -o none
 
 # Function App identity + roles
 FUNC_IDENTITY=$(az functionapp identity assign --name $FUNC_NAME --resource-group $RESOURCE_GROUP --query principalId -o tsv)
 
 az role assignment create --assignee $FUNC_IDENTITY \
-  --role "Storage Blob Data Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
+ --role "Storage Blob Data Contributor" \
+ --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
 az role assignment create --assignee $FUNC_IDENTITY \
-  --role "Storage File Data Privileged Contributor" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
+ --role "Storage File Data Privileged Contributor" \
+ --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Storage/storageAccounts/${STORAGE_NAME}" -o none
 
 az role assignment create --assignee $FUNC_IDENTITY \
-  --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}" -o none
+ --role "Cognitive Services OpenAI User" \
+ --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${OPENAI_NAME}" -o none
 ```
 
 ### Step 10: Deploy the Function
@@ -291,8 +291,8 @@ FUNC_KEY=$(az functionapp keys list --name $FUNC_NAME --resource-group $RESOURCE
 FUNC_URL="https://${FUNC_NAME}.azurewebsites.net/api/businessinsightbot_function"
 
 curl -s -X POST "${FUNC_URL}?code=${FUNC_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"user_input": "Hello", "conversation_history": []}' | python3 -m json.tool
+ -H "Content-Type: application/json" \
+ -d '{"user_input": "Hello", "conversation_history": []}' | python3 -m json.tool
 ```
 
 If the functions list is empty after deploy:
@@ -300,30 +300,30 @@ If the functions list is empty after deploy:
 az functionapp restart --name $FUNC_NAME --resource-group $RESOURCE_GROUP
 ```
 
-### Step 11: ⏸️ Tier 2 Complete
+### Step 11: Tier 2 Complete
 
 Save the Azure state:
 ```bash
 cat > ~/.config/brainstem/state.json << AZSTATE
 {
-  "tier": 2,
-  "install_dir": "~/.brainstem/src/rapp_brainstem",
-  "local_url": "http://localhost:7071",
-  "azure": {
-    "resource_group": "${RESOURCE_GROUP}",
-    "function_app": "${FUNC_NAME}",
-    "function_url": "${FUNC_URL}",
-    "storage_account": "${STORAGE_NAME}",
-    "openai_service": "${OPENAI_NAME}"
-  },
-  "status": "deployed"
+ "tier": 2,
+ "install_dir": "~/.brainstem/src/rapp_brainstem",
+ "local_url": "http://localhost:7071",
+ "azure": {
+ "resource_group": "${RESOURCE_GROUP}",
+ "function_app": "${FUNC_NAME}",
+ "function_url": "${FUNC_URL}",
+ "storage_account": "${STORAGE_NAME}",
+ "openai_service": "${OPENAI_NAME}"
+ },
+ "status": "deployed"
 }
 AZSTATE
 ```
 
 Tell the user:
 
-> **☁️ Spinal cord connected!** Your brainstem is deployed to Azure.
+> ** Spinal cord connected!** Your brainstem is deployed to Azure.
 >
 > **Azure endpoint:** `https://${FUNC_NAME}.azurewebsites.net`
 >
@@ -347,30 +347,30 @@ Tell the user:
 
 ---
 
-## 🤖 Tier 3: The Nervous System
+## Tier 3: The Nervous System
 
-*Your nervous system extends your brain's reach everywhere — eyes, ears, hands. Copilot Studio does the same: it connects your agent to Teams, M365 Copilot, and across your organization. The same logic you tested locally now serves your entire tenant.*
+*Your nervous system extends your brain's reach everywhere -- eyes, ears, hands. Copilot Studio does the same: it connects your agent to Teams, M365 Copilot, and across your organization. The same logic you tested locally now serves your entire tenant.*
 
 Only run this tier if the user asks to connect to Copilot Studio.
 
-### Step 12: ⏸️ Import the Power Platform Solution
+### Step 12: Import the Power Platform Solution
 
 Tell the user:
 
-> **🤖 Let's give your brainstem a nervous system — connecting it to Teams and M365 Copilot.**
+> ** Let's give your brainstem a nervous system -- connecting it to Teams and M365 Copilot.**
 >
 > The repo includes a Power Platform solution that creates a declarative agent in Copilot Studio wired to your Azure Function.
 >
 > **To import:**
 > 1. Open [make.powerapps.com](https://make.powerapps.com)
 > 2. Select your environment (top right)
-> 3. Go to **Solutions** → **Import solution**
+> 3. Go to **Solutions** -> **Import solution**
 > 4. Upload `MSFTAIBASMultiAgentCopilot_1_0_0_5.zip` from `~/.brainstem/src/`
-> 5. Follow the import wizard — accept defaults
+> 5. Follow the import wizard -- accept defaults
 >
 > Let me know when the import is done.
 
-### Step 13: ⏸️ Configure the Connector
+### Step 13: Configure the Connector
 
 Read the saved Azure state:
 ```bash
@@ -385,20 +385,20 @@ Tell the user:
 > 2. Find the **HTTP action** (or custom connector) that calls the agent
 > 3. Set the endpoint URL to: `${FUNC_URL}`
 > 4. Add the function key as a query parameter: `?code=${FUNC_KEY}`
-> 5. Test the connection — send "Hello" and verify you get a response
+> 5. Test the connection -- send "Hello" and verify you get a response
 >
 > Let me know when it's connected.
 
-### Step 14: ⏸️ Publish to Your Organization
+### Step 14: Publish to Your Organization
 
 Tell the user:
 
-> **Final step — publish your agent:**
+> **Final step -- publish your agent:**
 >
 > 1. In Copilot Studio, click **Publish**
 > 2. Choose your channels:
->    - **Microsoft Teams** — your agent appears as a Teams bot
->    - **M365 Copilot** — your agent appears as a plugin in Copilot
+> - **Microsoft Teams** -- your agent appears as a Teams bot
+> - **M365 Copilot** -- your agent appears as a plugin in Copilot
 > 3. Test it: open Teams and start a conversation with your agent
 >
 > The same agent logic you built and tested on your local brainstem is now live in your organization.
@@ -409,36 +409,36 @@ Update the state:
 ```bash
 cat > ~/.config/brainstem/state.json << T3STATE
 {
-  "tier": 3,
-  "install_dir": "~/.brainstem/src/rapp_brainstem",
-  "local_url": "http://localhost:7071",
-  "azure": {
-    "resource_group": "${RESOURCE_GROUP}",
-    "function_app": "${FUNC_NAME}",
-    "function_url": "${FUNC_URL}",
-    "storage_account": "${STORAGE_NAME}",
-    "openai_service": "${OPENAI_NAME}"
-  },
-  "copilot_studio": true,
-  "status": "published"
+ "tier": 3,
+ "install_dir": "~/.brainstem/src/rapp_brainstem",
+ "local_url": "http://localhost:7071",
+ "azure": {
+ "resource_group": "${RESOURCE_GROUP}",
+ "function_app": "${FUNC_NAME}",
+ "function_url": "${FUNC_URL}",
+ "storage_account": "${STORAGE_NAME}",
+ "openai_service": "${OPENAI_NAME}"
+ },
+ "copilot_studio": true,
+ "status": "published"
 }
 T3STATE
 ```
 
 Tell the user:
 
-> **🤖 Nervous system connected!** You've built the full stack.
+> ** Nervous system connected!** You've built the full stack.
 >
 > **What you learned across all 3 tiers:**
 >
 > | Tier | Layer | Skills |
 > |------|-------|--------|
-> | 🧠 Brainstem | Local | Python agents, function-calling, prompt engineering |
-> | ☁️ Spinal Cord | Azure | ARM templates, Functions, managed identity, RBAC |
-> | 🤖 Nervous System | M365 | Copilot Studio, declarative agents, Teams integration |
+> | Brainstem | Local | Python agents, function-calling, prompt engineering |
+> | Spinal Cord | Azure | ARM templates, Functions, managed identity, RBAC |
+> | Nervous System | M365 | Copilot Studio, declarative agents, Teams integration |
 >
 > **Your agent's journey:**
-> `soul.md` → `brainstem.py` → Azure Function → Copilot Studio → Teams/M365 Copilot
+> `soul.md` -> `brainstem.py` -> Azure Function -> Copilot Studio -> Teams/M365 Copilot
 >
 > From a local Python server to an enterprise AI agent, one layer at a time.
 
