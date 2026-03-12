@@ -56,8 +56,9 @@ AVAILABLE_MODELS = [
 
 # ── GitHub token ──────────────────────────────────────────────────────────────
 
-# GitHub Copilot VS Code extension client ID (same as openrappter)
-COPILOT_CLIENT_ID = "Ov23ctDVkRmgkPke0Mmm"
+# GitHub Copilot GitHub App client ID — produces ghu_ tokens that work with Copilot exchange API
+# Note: Ov23ctDVkRmgkPke0Mmm is an OAuth App that produces gho_ tokens — those get 404 from Copilot
+COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 _token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".copilot_token")
 _copilot_cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".copilot_session")
 
@@ -273,7 +274,7 @@ def start_device_code_login():
     resp = requests.post(
         "https://github.com/login/device/code",
         headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
-        data=f"client_id={COPILOT_CLIENT_ID}&scope=read:user,read:org,repo,gist",
+        data=f"client_id={COPILOT_CLIENT_ID}",
         timeout=10,
     )
     resp.raise_for_status()
