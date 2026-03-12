@@ -361,24 +361,45 @@
 
   // Health check — also handles login state
   let loginInProgress = false;
-  let loginGracePeriod = false;
+
+  function showLoginOverlay() {
+    document.getElementById('login-step1').style.display = 'block';
+    document.getElementById('login-step2').style.display = 'none';
+    document.getElementById('login-step3').style.display = 'none';
+    document.querySelector('.login-btn').disabled = false;
+    document.getElementById('login-overlay').style.display = 'flex';
+  }
+
+  function hideLoginOverlay() {
+    document.getElementById('login-overlay').style.display = 'none';
+  }
+
   async function checkHealth() {
     try {
       const r = await fetch(`${API}/health`);
       const d = await r.json();
+      const dot = document.getElementById('dot');
+      const statusText = document.getElementById('status-text');
+
       if (d.status === 'ok') {
-        document.getElementById('dot').className = 'dot';
-        document.getElementById('status-text').textContent = d.copilot ? 'copilot ✓' : 'online';
-        document.getElementById('login-overlay').style.display = 'none';
+        // Token exists on server — auth is good
+        dot.className = d.copilot === '✓' ? 'dot' : 'dot pending';
+        statusText.textContent = d.copilot === '✓' ? 'copilot ✓' : 'connecting...';
+        statusText.style.cursor = 'default';
+        statusText.onclick = null;
+        hideLoginOverlay();
+        localStorage.setItem('brainstem_auth', 'true');
         loginInProgress = false;
-        loginGracePeriod = false;
         loadModels();
       } else {
-        document.getElementById('dot').className = 'dot offline';
-        document.getElementById('status-text').textContent = 'not signed in';
-        // Don't show login overlay if we just finished auth or auth is in progress
-        if (!loginInProgress && !loginGracePeriod) {
-          document.getElementById('login-overlay').style.display = 'flex';
+        // No token on server
+        dot.className = 'dot offline';
+        statusText.textContent = 'sign in';
+        statusText.style.cursor = 'pointer';
+        statusText.onclick = showLoginOverlay;
+        // Only auto-show overlay if user has never authenticated on this device
+        if (!localStorage.getItem('brainstem_auth') && !loginInProgress) {
+          showLoginOverlay();
         }
       }
     } catch {
@@ -461,19 +482,11 @@
         document.getElementById('login-step2').style.display = 'none';
         document.getElementById('login-step3').style.display = 'block';
         loginInProgress = false;
-        loginGracePeriod = true;
-        // Hide overlay immediately — auth succeeded
+        localStorage.setItem('brainstem_auth', 'true');
+        // Hide overlay after brief success message
         setTimeout(() => {
-          document.getElementById('login-overlay').style.display = 'none';
-          // Reset login steps for next time
-          document.getElementById('login-step1').style.display = 'block';
-          document.getElementById('login-step2').style.display = 'none';
-          document.getElementById('login-step3').style.display = 'none';
-          document.querySelector('.login-btn').disabled = false;
+          hideLoginOverlay();
         }, 1500);
-        // Keep grace period for 30s so health check doesn't re-show overlay
-        // while the Copilot token exchange catches up
-        setTimeout(() => { loginGracePeriod = false; }, 30000);
         checkHealth();
         return;
       }
@@ -612,7 +625,14 @@
       removeTyping();
 
       if (d.error) {
-        appendMsg('system', `Error: ${d.error}`);
+        // Auth errors get a clickable re-auth link instead of blocking overlay
+        if (d.error.includes('Not authenticated') || d.error.includes('Copilot access') || d.error.includes('Sign in')) {
+          const wrap = appendMsg('system', '');
+          wrap.querySelector('.bubble').innerHTML =
+            '⚠️ Not signed in. <a href="#" onclick="showLoginOverlay(); return false;" style="color:#58a6ff;text-decoration:underline">Sign in with GitHub</a> to use Copilot AI.';
+        } else {
+          appendMsg('system', `Error: ${d.error}`);
+        }
       } else {
         sessionId = d.session_id;
         document.getElementById('session-id').textContent = sessionId?.slice(0, 8) + '...';

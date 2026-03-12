@@ -229,21 +229,11 @@ def get_copilot_token():
         if refreshed:
             resp = _exchange_github_for_copilot(refreshed)
         if resp.status_code in (401, 404):
-            # Token exchange failed even after refresh attempt.
-            # Don't delete the token file — a future refresh may still work,
-            # and deleting it would cause fallback to gho_ tokens from gh CLI
-            # which are guaranteed to fail with Copilot.
-            token_data = _read_token_file()
-            has_refresh = token_data and token_data.get("refresh_token")
-            if has_refresh:
-                print("[brainstem] Copilot exchange failed — will retry with refresh token on next request")
-            else:
-                print("[brainstem] Copilot exchange failed — token may have expired. Visit /login to re-authenticate.")
-                if os.path.exists(_token_file):
-                    os.remove(_token_file)
+            # Token exchange failed — NEVER delete the token file.
+            # Transient failures shouldn't require full re-auth.
+            print(f"[brainstem] Copilot token exchange failed (HTTP {resp.status_code}). Token preserved for retry.")
             raise RuntimeError(
-                "GitHub token doesn't have Copilot access. "
-                "Visit /login in your browser to authenticate with GitHub Copilot."
+                "Not authenticated. Sign in with GitHub to use Copilot AI."
             )
     resp.raise_for_status()
     
@@ -617,9 +607,13 @@ def login_poll():
     try:
         token = poll_device_code()
         if token:
-            # Token saved — don't validate against Copilot here to avoid
-            # race conditions that could delete the freshly saved token.
-            # The next health check will validate it.
+            # Eagerly exchange for Copilot token so health check shows ready immediately
+            try:
+                get_copilot_token()
+                print("[brainstem] Copilot session established after login")
+            except Exception as e:
+                print(f"[brainstem] Eager Copilot exchange deferred: {e}")
+                # Not fatal — will exchange on first /chat call
             return jsonify({"status": "ok", "message": "Authenticated with GitHub Copilot!"})
         return jsonify({"status": "pending"})
     except Exception as e:
@@ -661,23 +655,32 @@ def health():
         pass
     soul_ok = os.path.exists(SOUL_PATH)
 
-    try:
-        copilot_token, endpoint = get_copilot_token()
+    # Lightweight auth check — just see if a GitHub token EXISTS.
+    # Never do token exchange here; that happens lazily on first /chat call.
+    github_token = get_github_token()
+
+    # Check if we have a cached (valid) Copilot session (memory or disk)
+    copilot_ok = False
+    if _copilot_token_cache["token"] and time.time() < _copilot_token_cache["expires_at"] - 60:
+        copilot_ok = True
+    else:
+        disk_cache = _load_copilot_cache()
+        if disk_cache:
+            copilot_ok = True
+
+    if github_token:
         return jsonify({
             "status": "ok",
             "version": VERSION,
             "model":  MODEL,
             "soul":   SOUL_PATH if soul_ok else "missing",
             "agents": list(agents.keys()),
-            "copilot": "✓",
-            "endpoint": endpoint,
+            "copilot": "✓" if copilot_ok else "pending",
         })
-    except Exception as e:
-        # Return 200 with unauthenticated status so the UI shows the login overlay
-        # instead of treating it as a server error
+    else:
         return jsonify({
             "status": "unauthenticated",
-            "error": str(e),
+            "version": VERSION,
             "model":  MODEL,
             "soul":   SOUL_PATH if soul_ok else "missing",
             "agents": list(agents.keys()),
