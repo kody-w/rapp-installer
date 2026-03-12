@@ -311,9 +311,34 @@ launch_brainstem() {
     local client_id="Iv1.b507a08c87ecfe98"
 
     # Step 1: Copilot authentication (device code flow)
+    local needs_auth=true
     if [ -f "$token_file" ]; then
-        echo -e "  ${GREEN}✓${NC} Already authenticated with GitHub Copilot"
-    else
+        # Validate existing token against Copilot API
+        local saved_token
+        saved_token=$("$PYTHON_CMD" -c "import json; print(json.load(open('$token_file')).get('access_token',''))" 2>/dev/null)
+        if [[ -n "$saved_token" ]]; then
+            local auth_prefix="token"
+            if [[ "$saved_token" != ghu_* ]]; then auth_prefix="Bearer"; fi
+            local check_status
+            check_status=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: $auth_prefix $saved_token" \
+                -H "Accept: application/json" \
+                -H "Editor-Version: vscode/1.95.0" \
+                -H "Editor-Plugin-Version: copilot/1.0.0" \
+                "https://api.github.com/copilot_internal/v2/token" 2>/dev/null)
+            if [[ "$check_status" == "200" ]]; then
+                echo -e "  ${GREEN}✓${NC} Already authenticated with GitHub Copilot"
+                needs_auth=false
+            else
+                echo -e "  ${YELLOW}⚠${NC} Saved token expired — re-authenticating..."
+                rm -f "$token_file"
+            fi
+        else
+            rm -f "$token_file"
+        fi
+    fi
+
+    if [[ "$needs_auth" == true ]]; then
         echo ""
         echo -e "  ${CYAN}Authenticating with GitHub Copilot...${NC}"
         echo ""
