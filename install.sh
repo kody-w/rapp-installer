@@ -311,6 +311,9 @@ main() {
     install_cli
     create_env
 
+    # Make sure brainstem and gh are on PATH for this session
+    export PATH="$BRAINSTEM_BIN:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
     local installed_version
     installed_version=$(cat "$BRAINSTEM_HOME/src/rapp_brainstem/VERSION" 2>/dev/null | tr -d '[:space:]')
 
@@ -319,15 +322,41 @@ main() {
     echo -e "  ${GREEN}✓ RAPP Brainstem v${installed_version} installed!${NC}"
     echo "═══════════════════════════════════════════════════"
     echo ""
-    echo "  Get started:"
-    echo -e "    ${CYAN}gh auth login${NC}        # authenticate with GitHub"
-    echo -e "    ${CYAN}brainstem${NC}            # start the server (localhost:7071)"
+
+    # --- White-glove setup: authenticate and launch ---
+
+    # Step 1: GitHub authentication
+    if command -v gh &> /dev/null; then
+        if gh auth status &> /dev/null; then
+            echo -e "  ${GREEN}✓${NC} Already authenticated with GitHub"
+        else
+            echo -e "  ${CYAN}Authenticating with GitHub...${NC}"
+            echo "  A browser window will open — follow the prompts to sign in."
+            echo ""
+            gh auth login --web -h github.com -p https < /dev/tty
+            if gh auth status &> /dev/null; then
+                echo ""
+                echo -e "  ${GREEN}✓${NC} GitHub authentication complete"
+            else
+                echo ""
+                echo -e "  ${YELLOW}!${NC} Auth skipped — run ${CYAN}gh auth login${NC} later"
+            fi
+        fi
+    else
+        echo -e "  ${YELLOW}!${NC} GitHub CLI not available — run ${CYAN}gh auth login${NC} after installing it"
+    fi
+
+    # Step 2: Launch brainstem
     echo ""
-    echo "  Then open http://localhost:7071 in your browser."
+    echo -e "  ${CYAN}Starting RAPP Brainstem...${NC}"
     echo ""
-    echo "  Restart your terminal or run:"
-    echo "    source ~/.bashrc   # or ~/.zshrc"
-    echo ""
+
+    cd "$BRAINSTEM_HOME/src/rapp_brainstem"
+
+    # Open the browser after a short delay (server needs a moment to start)
+    (sleep 3 && open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null) &
+
+    exec "$PYTHON_CMD" brainstem.py
 }
 
 main
