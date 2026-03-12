@@ -309,11 +309,11 @@
     color: #484f58;
   }
   #session-id { font-family: "SF Mono", monospace; }
-  #clear-btn {
+  #clear-btn, #export-btn {
     background: none; border: none; color: #484f58;
     cursor: pointer; font-size: 11px; text-decoration: underline;
   }
-  #clear-btn:hover { color: #8b949e; }
+  #clear-btn:hover, #export-btn:hover { color: #8b949e; }
 
   /* Model selector */
   #model-select {
@@ -381,6 +381,7 @@
 <footer>
   <div class="meta-row">
     <span>Session: <span id="session-id">—</span></span>
+    <button id="export-btn" onclick="exportChat()" title="Export chat as JSON">📥 Export</button>
     <button id="clear-btn" onclick="clearChat()">Clear</button>
   </div>
   <div class="input-row">
@@ -393,6 +394,7 @@
   const API = '';  // same origin
   let sessionId = null;
   let history = [];
+  let fullTranscript = [];  // full transcript with agent_logs for export
 
   // Health check — also handles login state
   let loginInProgress = false;
@@ -650,6 +652,7 @@
 
     appendMsg('user', text);
     history.push({ role: 'user', content: text });
+    fullTranscript.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
 
     appendTyping();
 
@@ -689,6 +692,15 @@
         sessionId = d.session_id;
         document.getElementById('session-id').textContent = sessionId?.slice(0, 8) + '...';
         history.push({ role: 'assistant', content: d.response });
+        fullTranscript.push({
+          role: 'assistant',
+          content: d.response,
+          agent_logs: d.agent_logs || null,
+          voice_response: d.voice_response || null,
+          model: document.getElementById('model-select')?.value || null,
+          session_id: d.session_id,
+          timestamp: new Date().toISOString()
+        });
         appendMsg('assistant', d.response, d.agent_logs && d.agent_logs.trim() ? d.agent_logs : null);
         if (d.voice_response) {
           speakText(d.voice_response);
@@ -741,10 +753,29 @@
 
   function clearChat() {
     history = [];
+    fullTranscript = [];
     sessionId = null;
     document.getElementById('session-id').textContent = '—';
     const chat = document.getElementById('chat');
     chat.innerHTML = `<div class="msg system"><div class="bubble">Chat cleared — start a new conversation</div></div>`;
+  }
+
+  function exportChat() {
+    if (!fullTranscript.length) { alert('Nothing to export yet.'); return; }
+    const payload = {
+      exported_at: new Date().toISOString(),
+      session_id: sessionId,
+      brainstem_version: document.title,
+      model: document.getElementById('model-select')?.value || 'unknown',
+      turns: fullTranscript
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `brainstem-chat-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 </script>
 </body>
