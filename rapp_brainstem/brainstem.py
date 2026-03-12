@@ -39,6 +39,7 @@ SOUL_PATH   = os.getenv("SOUL_PATH",   os.path.join(os.path.dirname(__file__), "
 AGENTS_PATH = os.getenv("AGENTS_PATH", os.path.join(os.path.dirname(__file__), "agents"))
 MODEL       = os.getenv("GITHUB_MODEL", "gpt-4o")
 PORT        = int(os.getenv("PORT", 7071))
+VOICE_MODE  = os.getenv("VOICE_MODE", "false").lower() == "true"
 
 _version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
 VERSION = open(_version_file).read().strip() if os.path.exists(_version_file) else "0.0.0"
@@ -647,7 +648,11 @@ def chat():
         agents = load_agents()
         tools  = [a.to_tool() for a in agents.values()] if agents else None
 
-        messages = [{"role": "system", "content": soul}]
+        system_content = soul
+        if VOICE_MODE:
+            system_content += "\n\nIMPORTANT: End every response with |||VOICE||| followed by a concise, conversational version of your answer suitable for text-to-speech. Keep the voice version under 2-3 sentences. The part before |||VOICE||| should be the full formatted response."
+
+        messages = [{"role": "system", "content": system_content}]
         messages += [m for m in history if m.get("role") in ("user", "assistant", "tool")]
         messages.append({"role": "user", "content": user_input})
 
@@ -667,11 +672,20 @@ def chat():
                 break
 
         reply = msg.get("content") or ""
-        return jsonify({
+        
+        result = {
             "response": reply,
             "session_id": session_id,
-            "agent_logs": "\n".join(all_logs)
-        })
+            "agent_logs": "\n".join(all_logs),
+            "voice_mode": VOICE_MODE,
+        }
+        
+        if VOICE_MODE and "|||VOICE|||" in reply:
+            parts = reply.split("|||VOICE|||", 1)
+            result["response"] = parts[0].strip()
+            result["voice_response"] = parts[1].strip()
+        
+        return jsonify(result)
 
     except requests.exceptions.HTTPError as e:
         traceback.print_exc()
@@ -743,6 +757,22 @@ def set_model():
     MODEL = new_model
     return jsonify({"model": MODEL})
 
+@app.route("/voice", methods=["GET"])
+def voice_status():
+    """Get voice mode status."""
+    return jsonify({"voice_mode": VOICE_MODE})
+
+@app.route("/voice/toggle", methods=["POST"])
+def voice_toggle():
+    """Toggle voice mode on/off."""
+    global VOICE_MODE
+    data = request.get_json(force=True) or {}
+    if "enabled" in data:
+        VOICE_MODE = bool(data["enabled"])
+    else:
+        VOICE_MODE = not VOICE_MODE
+    return jsonify({"voice_mode": VOICE_MODE})
+
 @app.route("/version", methods=["GET"])
 def version():
     """Return the current brainstem version."""
@@ -775,6 +805,7 @@ def health():
             "status": "ok",
             "version": VERSION,
             "model":  MODEL,
+            "voice_mode": VOICE_MODE,
             "soul":   SOUL_PATH if soul_ok else "missing",
             "agents": list(agents.keys()),
             "copilot": "✓" if copilot_ok else "pending",
@@ -823,6 +854,7 @@ if __name__ == "__main__":
     print(f"   Soul:   {SOUL_PATH}")
     print(f"   Agents: {AGENTS_PATH}")
     print(f"   Model:  {MODEL}")
+    print(f"   Voice:  {'on' if VOICE_MODE else 'off'} (POST /voice/toggle to change)")
     print(f"   Auth:   GitHub Copilot API (via gh CLI)\n")
     load_soul()
     load_agents()

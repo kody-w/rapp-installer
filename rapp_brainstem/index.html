@@ -34,6 +34,18 @@
     font-size: 12px;
     color: #8b949e;
   }
+  .voice-btn {
+    background: none;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #8b949e;
+    transition: all 0.2s;
+  }
+  .voice-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  .voice-btn.active { border-color: #3fb950; color: #3fb950; background: rgba(63,185,80,0.1); }
   .dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: #3fb950;
@@ -334,6 +346,7 @@
     <div class="dot" id="dot"></div>
     <span id="status-text">checking...</span>
     <select id="model-select" onchange="changeModel(this.value)"></select>
+    <button class="voice-btn" id="voice-btn" onclick="toggleVoice()" title="Toggle voice mode">🔇</button>
   </div>
 </header>
 
@@ -647,6 +660,11 @@
         document.getElementById('session-id').textContent = sessionId?.slice(0, 8) + '...';
         history.push({ role: 'assistant', content: d.response });
         appendMsg('assistant', d.response, d.agent_logs || null);
+        if (d.voice_response) {
+          speakText(d.voice_response);
+        } else if (voiceMode) {
+          speakText(d.response.replace(/[#*`_\[\]()>|]/g, '').slice(0, 300));
+        }
       }
     } catch (err) {
       removeTyping();
@@ -656,6 +674,40 @@
     document.getElementById('send').disabled = false;
     input.focus();
   }
+
+  // ── Voice mode ────────────────────────────────────────────────
+  let voiceMode = false;
+
+  async function toggleVoice() {
+    try {
+      const r = await fetch(`${API}/voice/toggle`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      const d = await r.json();
+      voiceMode = d.voice_mode;
+      updateVoiceBtn();
+    } catch(e) { console.error('Voice toggle failed:', e); }
+  }
+
+  function updateVoiceBtn() {
+    const btn = document.getElementById('voice-btn');
+    btn.textContent = voiceMode ? '🔊' : '🔇';
+    btn.className = voiceMode ? 'voice-btn active' : 'voice-btn';
+    btn.title = voiceMode ? 'Voice mode ON — click to disable' : 'Voice mode OFF — click to enable';
+  }
+
+  function speakText(text) {
+    if (!text || !voiceMode) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.05;
+    utter.pitch = 1.0;
+    window.speechSynthesis.speak(utter);
+  }
+
+  // Check voice status on load
+  fetch(`${API}/voice`).then(r => r.json()).then(d => {
+    voiceMode = d.voice_mode;
+    updateVoiceBtn();
+  }).catch(() => {});
 
   function clearChat() {
     history = [];
