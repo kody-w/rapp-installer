@@ -175,6 +175,45 @@ check_prereqs() {
             exit 1
         fi
     fi
+
+    # GitHub CLI (required for Copilot token auth)
+    if command -v gh &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} GitHub CLI $(gh --version | head -1 | awk '{print $3}')"
+    else
+        echo -e "  ${YELLOW}⚠${NC} GitHub CLI not found, installing..."
+        local os_type=$(detect_os)
+        if [[ "$os_type" == "macos" ]]; then
+            if command -v brew &> /dev/null; then
+                brew install gh
+            else
+                echo -e "  ${RED}✗${NC} Homebrew required to install gh — install from https://cli.github.com"
+                exit 1
+            fi
+        elif [[ "$os_type" == "linux" ]]; then
+            if command -v apt-get &> /dev/null; then
+                (type -p wget >/dev/null || sudo apt-get install -y wget) \
+                    && sudo mkdir -p -m 755 /etc/apt/keyrings \
+                    && out=$(mktemp) && wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+                    && cat "$out" | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+                    && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+                    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+                    && sudo apt-get update && sudo apt-get install -y gh
+            elif command -v dnf &> /dev/null; then
+                sudo dnf install -y 'dnf-command(config-manager)' \
+                    && sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo \
+                    && sudo dnf install -y gh
+            else
+                echo -e "  ${RED}✗${NC} Cannot auto-install GitHub CLI on this system"
+                echo "    Install manually from https://cli.github.com"
+                exit 1
+            fi
+        fi
+        if command -v gh &> /dev/null; then
+            echo -e "  ${GREEN}✓${NC} GitHub CLI installed"
+        else
+            echo -e "  ${YELLOW}!${NC} GitHub CLI not installed — you can install later from https://cli.github.com"
+        fi
+    fi
 }
 
 install_brainstem() {
