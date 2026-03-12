@@ -43,13 +43,23 @@ detect_os() {
     fi
 }
 
+# Ensure Homebrew is on PATH — curl|bash sessions don't source shell profiles
+ensure_brew_on_path() {
+    if command -v brew &> /dev/null; then return 0; fi
+    if [[ -x "/opt/homebrew/bin/brew" ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -x "/usr/local/bin/brew" ]]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+}
+
 find_python() {
     for cmd in python3.11 python3.12 python3.13 python3; do
         if command -v "$cmd" &> /dev/null; then
-            version=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+            version=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) || continue
             major=$(echo "$version" | cut -d. -f1)
             minor=$(echo "$version" | cut -d. -f2)
-            if [ "$major" -ge 3 ] && [ "$minor" -ge 11 ]; then
+            if [[ -n "$major" && -n "$minor" ]] && [ "$major" -ge 3 ] 2>/dev/null && [ "$minor" -ge 11 ] 2>/dev/null; then
                 echo "$cmd"
                 return 0
             fi
@@ -143,6 +153,11 @@ check_for_upgrade() {
 check_prereqs() {
     echo "Checking prerequisites..."
 
+    # On macOS, ensure Homebrew is on PATH (curl|bash doesn't source shell profiles)
+    if [[ "$(detect_os)" == "macos" ]]; then
+        ensure_brew_on_path
+    fi
+
     # Python 3.11+
     PYTHON_CMD=$(find_python) || true
     if [[ -n "$PYTHON_CMD" ]]; then
@@ -186,8 +201,10 @@ check_prereqs() {
             if command -v brew &> /dev/null; then
                 brew install gh
             else
-                echo -e "  ${RED}✗${NC} Homebrew required to install gh — install from https://cli.github.com"
-                exit 1
+                echo -e "  ${YELLOW}⚠${NC} Installing Homebrew first..."
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                ensure_brew_on_path
+                brew install gh
             fi
         elif [[ "$os_type" == "linux" ]]; then
             if command -v apt-get &> /dev/null; then
@@ -203,15 +220,13 @@ check_prereqs() {
                     && sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo \
                     && sudo dnf install -y gh
             else
-                echo -e "  ${RED}✗${NC} Cannot auto-install GitHub CLI on this system"
-                echo "    Install manually from https://cli.github.com"
-                exit 1
+                echo -e "  ${YELLOW}⚠${NC} Cannot auto-install GitHub CLI — install from https://cli.github.com"
             fi
         fi
         if command -v gh &> /dev/null; then
             echo -e "  ${GREEN}✓${NC} GitHub CLI installed"
         else
-            echo -e "  ${YELLOW}!${NC} GitHub CLI not installed — you can install later from https://cli.github.com"
+            echo -e "  ${YELLOW}!${NC} GitHub CLI not installed — install later from https://cli.github.com"
         fi
     fi
 }
