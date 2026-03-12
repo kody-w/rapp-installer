@@ -452,9 +452,15 @@ with open(sys.argv[2], 'w') as f: json.dump(out, f)
     cd "$BRAINSTEM_HOME/src/rapp_brainstem"
 
     # Open the browser after a short delay
-    (sleep 3 && open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null) &
+    (sleep 3 && (open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null)) &
 
-    exec "$PYTHON_CMD" brainstem.py
+    # Use exec to replace shell — but only if stdin is a terminal.
+    # When piped (curl | bash), exec can lose the TTY and hang.
+    if [ -t 0 ]; then
+        exec "$PYTHON_CMD" brainstem.py
+    else
+        "$PYTHON_CMD" brainstem.py </dev/tty
+    fi
 }
 
 main() {
