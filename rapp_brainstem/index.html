@@ -625,8 +625,17 @@
       removeTyping();
 
       if (d.error) {
-        // Auth errors get a clickable re-auth link instead of blocking overlay
-        if (d.error.includes('Not authenticated') || d.error.includes('Copilot access') || d.error.includes('Sign in')) {
+        if (d.error.startsWith('NO_COPILOT_ACCESS:')) {
+          // Specific: this GitHub account doesn't have Copilot
+          const username = d.error.split(':')[1] || 'this account';
+          const wrap = appendMsg('system', '');
+          wrap.querySelector('.bubble').innerHTML =
+            `⚠️ <strong>${username}</strong> doesn't have GitHub Copilot access.<br><br>` +
+            `<a href="#" onclick="showLoginOverlay(); return false;" style="color:#58a6ff;text-decoration:underline">Sign in with a different account</a> ` +
+            `or <a href="https://github.com/github-copilot/signup" target="_blank" style="color:#58a6ff;text-decoration:underline">sign up for Copilot</a>.`;
+          // Clear localStorage so overlay auto-shows next time
+          localStorage.removeItem('brainstem_auth');
+        } else if (d.error.includes('Not authenticated') || d.error.includes('Copilot') || d.error.includes('Sign in')) {
           const wrap = appendMsg('system', '');
           wrap.querySelector('.bubble').innerHTML =
             '⚠️ Not signed in. <a href="#" onclick="showLoginOverlay(); return false;" style="color:#58a6ff;text-decoration:underline">Sign in with GitHub</a> to use Copilot AI.';

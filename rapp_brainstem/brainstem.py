@@ -234,9 +234,27 @@ def get_copilot_token():
             resp = _exchange_github_for_copilot(refreshed)
         if resp.status_code in (401, 403, 404):
             # Token exchange failed — NEVER delete the token file.
-            # Transient failures shouldn't require full re-auth.
             try:
                 err_body = resp.json()
+                err_details = err_body.get("error_details", {})
+                notification_id = err_details.get("notification_id", "")
+            except Exception:
+                err_details = {}
+                notification_id = ""
+
+            if notification_id == "no_copilot_access":
+                # Extract username from error message
+                detail_msg = err_details.get("message", "")
+                username = detail_msg.split("as ")[-1].rstrip(".") if "as " in detail_msg else "this account"
+                print(f"[brainstem] No Copilot access for {username}")
+                # Delete the bad token so health check shows unauthenticated
+                if os.path.exists(_token_file):
+                    os.remove(_token_file)
+                raise RuntimeError(
+                    f"NO_COPILOT_ACCESS:{username}"
+                )
+
+            try:
                 err_msg = err_body.get("message", resp.text[:200])
             except Exception:
                 err_msg = resp.text[:200]

@@ -403,7 +403,31 @@ out = {'access_token': d['access_token']}
 if d.get('refresh_token'): out['refresh_token'] = d['refresh_token']
 with open(sys.argv[2], 'w') as f: json.dump(out, f)
 " "$poll_resp" "$token_file"
-                    echo -e "  ${GREEN}✓${NC} Authenticated with GitHub Copilot"
+
+                    # Validate Copilot access immediately
+                    local copilot_check copilot_status
+                    copilot_check=$(curl -s -w "\n%{http_code}" \
+                        -H "Authorization: token $access_token" \
+                        -H "Accept: application/json" \
+                        -H "Editor-Version: vscode/1.95.0" \
+                        -H "Editor-Plugin-Version: copilot/1.0.0" \
+                        "https://api.github.com/copilot_internal/v2/token" 2>/dev/null)
+                    copilot_status=$(echo "$copilot_check" | tail -1)
+
+                    if [[ "$copilot_status" == "200" ]]; then
+                        echo -e "  ${GREEN}✓${NC} Authenticated — Copilot access confirmed"
+                    elif [[ "$copilot_status" == "403" ]]; then
+                        echo ""
+                        echo -e "  ${RED}✗${NC} This GitHub account does NOT have Copilot access."
+                        echo ""
+                        echo -e "  Either:"
+                        echo -e "    1. Sign up for Copilot: ${CYAN}https://github.com/github-copilot/signup${NC}"
+                        echo -e "    2. Re-run this installer and sign in with a different GitHub account"
+                        echo ""
+                        rm -f "$token_file"
+                    else
+                        echo -e "  ${GREEN}✓${NC} Authenticated with GitHub"
+                    fi
                     break
                 fi
 
