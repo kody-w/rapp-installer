@@ -54,6 +54,9 @@ AVAILABLE_MODELS = [
     {"id": "gpt-3.5-turbo",   "name": "GPT-3.5 Turbo"},
 ]
 
+# Models that don't support OpenAI-style tool_choice parameter
+_NO_TOOL_CHOICE_MODELS = {"claude-sonnet-4"}
+
 # ── GitHub token ──────────────────────────────────────────────────────────────
 
 # GitHub Copilot GitHub App client ID — produces ghu_ tokens that work with Copilot exchange API
@@ -540,9 +543,20 @@ def call_copilot(messages, tools=None):
     }
     if tools:
         body["tools"] = tools
-        body["tool_choice"] = "auto"
+        if MODEL not in _NO_TOOL_CHOICE_MODELS:
+            body["tool_choice"] = "auto"
 
     resp = requests.post(url, headers=headers, json=body, timeout=60)
+    if resp.status_code != 200:
+        error_detail = resp.text[:500] if resp.text else "No details"
+        print(f"[brainstem] API error {resp.status_code} with model '{MODEL}': {error_detail}")
+        # If a non-default model fails, fall back to gpt-4o
+        if MODEL != "gpt-4o":
+            print(f"[brainstem] Retrying with gpt-4o...")
+            body["model"] = "gpt-4o"
+            if "tool_choice" not in body and tools:
+                body["tool_choice"] = "auto"
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
     resp.raise_for_status()
     return resp.json()
 
@@ -620,6 +634,15 @@ def chat():
             "session_id": session_id,
             "agent_logs": "\n".join(all_logs)
         })
+
+    except requests.exceptions.HTTPError as e:
+        traceback.print_exc()
+        status = e.response.status_code if e.response is not None else 502
+        return jsonify({
+            "error": f"Model '{MODEL}' returned {status}. Try switching to gpt-4o.",
+            "model": MODEL,
+            "detail": str(e)[:300]
+        }), 502
 
     except Exception as e:
         traceback.print_exc()
