@@ -79,19 +79,23 @@ def _read_token_file():
         return None
 
 def get_github_token():
-    """Get GitHub token from env, saved file, or gh CLI."""
+    """Get GitHub token from env, saved file, or gh CLI.
+    
+    Only returns tokens that work with the Copilot token exchange API.
+    Tokens from 'gh auth token' (gho_ prefix) don't have Copilot access,
+    so we skip them and only use ghu_ tokens from our device code flow.
+    """
     # 1. Env var
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
         return token
-    # 2. Saved token from device code login
+    # 2. Saved token from device code login (ghu_ tokens)
     data = _read_token_file()
     if data and data.get("access_token"):
         return data["access_token"]
-    # 3. gh CLI
+    # 3. gh CLI — only use if it returns a Copilot-compatible token (not gho_)
     try:
         env = os.environ.copy()
-        # On Windows, refresh PATH so we can find gh even in a new process
         if sys.platform == "win32":
             machine = os.environ.get("Path", "")
             try:
@@ -110,7 +114,7 @@ def get_github_token():
             env=env,
         )
         token = result.stdout.strip()
-        if token:
+        if token and not token.startswith("gho_"):
             return token
     except Exception:
         pass
@@ -225,16 +229,20 @@ def get_copilot_token():
         if refreshed:
             resp = _exchange_github_for_copilot(refreshed)
         if resp.status_code in (401, 404):
-            # Only clear the token file if there's no refresh_token to try later
+            # Token exchange failed even after refresh attempt.
+            # Don't delete the token file — a future refresh may still work,
+            # and deleting it would cause fallback to gho_ tokens from gh CLI
+            # which are guaranteed to fail with Copilot.
             token_data = _read_token_file()
             has_refresh = token_data and token_data.get("refresh_token")
-            if not has_refresh and os.path.exists(_token_file):
-                os.remove(_token_file)
-                print("[brainstem] Cleared expired token file (no refresh token available)")
-            elif has_refresh:
-                print("[brainstem] Copilot exchange failed but keeping token file (has refresh token)")
+            if has_refresh:
+                print("[brainstem] Copilot exchange failed — will retry with refresh token on next request")
+            else:
+                print("[brainstem] Copilot exchange failed — token may have expired. Visit /login to re-authenticate.")
+                if os.path.exists(_token_file):
+                    os.remove(_token_file)
             raise RuntimeError(
-                "GitHub token doesn't have Copilot access yet. "
+                "GitHub token doesn't have Copilot access. "
                 "Visit /login in your browser to authenticate with GitHub Copilot."
             )
     resp.raise_for_status()
