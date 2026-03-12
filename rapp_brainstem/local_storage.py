@@ -1,6 +1,9 @@
 """
 LocalStorageManager — drop-in replacement for AzureFileStorageManager.
-Stores data in local JSON files under .brainstem_data/ instead of Azure.
+Mirrors the CommunityRAPP storage layout:
+  shared_memories/memory.json   — shared memories
+  memory/{guid}/user_memory.json — per-user memories
+Data lives in .brainstem_data/ next to this file.
 """
 
 import os
@@ -12,31 +15,49 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brainstem
 
 class AzureFileStorageManager:
     """
-    Local-first shim that mirrors the AzureFileStorageManager API.
-    Imported as `from utils.azure_file_storage import AzureFileStorageManager`
-    by remote agents — they get this local version transparently.
+    Local-first shim that mirrors the AzureFileStorageManager API from
+    CommunityRAPP.  Agents import this transparently via the shim in brainstem.py.
     """
+
+    DEFAULT_MARKER_GUID = "c0p110t0-aaaa-bbbb-cccc-123456789abc"
 
     def __init__(self, share_name=None, **kwargs):
         self.current_guid = None
-        self._share = share_name or "memory"
+        # Matches CommunityRAPP paths
+        self.shared_memory_path = "shared_memories"
+        self.default_file_name = "memory.json"
+        self.current_memory_path = self.shared_memory_path
         os.makedirs(_DATA_DIR, exist_ok=True)
 
     # ── Context ───────────────────────────────────────────────────────────
 
     def set_memory_context(self, user_guid=None):
-        """Set the user context for memory operations."""
+        """Set the memory context — matches CommunityRAPP's set_memory_context."""
+        if not user_guid or user_guid == self.DEFAULT_MARKER_GUID:
+            self.current_guid = None
+            self.current_memory_path = self.shared_memory_path
+            return True
+
+        # Valid GUID — set up user-specific path (memory/{guid})
         self.current_guid = user_guid
+        self.current_memory_path = f"memory/{user_guid}"
+        return True
 
     # ── Core I/O ──────────────────────────────────────────────────────────
 
     def _file_path(self):
+        """Return the absolute path for the current memory file.
+        Shared:  .brainstem_data/shared_memories/memory.json
+        User:    .brainstem_data/memory/{guid}/user_memory.json
+        """
         if self.current_guid:
-            folder = os.path.join(_DATA_DIR, self.current_guid)
+            folder = os.path.join(_DATA_DIR, self.current_memory_path)
+            fname = "user_memory.json"
         else:
-            folder = os.path.join(_DATA_DIR, "shared")
+            folder = os.path.join(_DATA_DIR, self.shared_memory_path)
+            fname = self.default_file_name
         os.makedirs(folder, exist_ok=True)
-        return os.path.join(folder, f"{self._share}.json")
+        return os.path.join(folder, fname)
 
     def read_json(self, file_path=None):
         """Read JSON data from local storage."""

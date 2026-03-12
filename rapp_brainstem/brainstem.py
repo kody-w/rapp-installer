@@ -601,7 +601,10 @@ def call_copilot(messages, tools=None):
 
 # ── Agent execution ───────────────────────────────────────────────────────────
 
-def run_tool_calls(tool_calls, agents):
+_MEMORY_AGENTS = {"ManageMemory", "ContextMemory"}
+
+
+def run_tool_calls(tool_calls, agents, session_id=None):
     results = []
     logs = []
     for tc in tool_calls:
@@ -610,6 +613,12 @@ def run_tool_calls(tool_calls, agents):
             args = json.loads(tc["function"].get("arguments", "{}"))
         except Exception:
             args = {}
+
+        # Match CommunityRAPP pattern: inject consistent user context for
+        # memory agents so they always read/write the same storage path.
+        if fn_name in _MEMORY_AGENTS:
+            args.pop("user_guid", None)  # strip LLM-invented GUIDs
+            print(f"[brainstem] {fn_name} args: {json.dumps(args)[:200]}")
 
         agent = agents.get(fn_name)
         if agent:
@@ -668,7 +677,7 @@ def chat():
             # Some models use finish_reason "tool_calls", others just include tool_calls in the message
             if msg.get("tool_calls"):
                 print(f"[brainstem] Tool calls triggered (finish_reason={finish}): {[tc['function']['name'] for tc in msg['tool_calls']]}")
-                tool_results, logs = run_tool_calls(msg["tool_calls"], agents)
+                tool_results, logs = run_tool_calls(msg["tool_calls"], agents, session_id=session_id)
                 all_logs.extend(logs)
                 messages.extend(tool_results)
             else:
