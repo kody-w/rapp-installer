@@ -55,7 +55,45 @@ AVAILABLE_MODELS = [
 ]
 
 # Models that don't support OpenAI-style tool_choice parameter
-_NO_TOOL_CHOICE_MODELS = {"claude-sonnet-4"}
+_NO_TOOL_CHOICE_MODELS = {"claude-sonnet-4", "claude-"}
+_models_fetched = False
+
+def _fetch_copilot_models():
+    """Fetch available models from Copilot API. Updates AVAILABLE_MODELS in place."""
+    global AVAILABLE_MODELS, _models_fetched, _NO_TOOL_CHOICE_MODELS
+    if _models_fetched:
+        return
+    try:
+        copilot_token, endpoint = get_copilot_token()
+        resp = requests.get(
+            f"{endpoint}/models",
+            headers={
+                "Authorization": f"Bearer {copilot_token}",
+                "Content-Type": "application/json",
+                "Editor-Version": "vscode/1.95.0",
+                "Copilot-Integration-Id": "vscode-chat",
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            models_list = data if isinstance(data, list) else data.get("data", data.get("models", []))
+            if models_list:
+                new_models = []
+                for m in models_list:
+                    mid = m.get("id", m.get("model", ""))
+                    mname = m.get("name", mid)
+                    if mid:
+                        new_models.append({"id": mid, "name": mname})
+                        if "claude" in mid.lower() or "o1" in mid.lower():
+                            _NO_TOOL_CHOICE_MODELS.add(mid)
+                if new_models:
+                    AVAILABLE_MODELS = new_models
+                    print(f"[brainstem] Fetched {len(new_models)} models from Copilot API")
+        _models_fetched = True
+    except Exception as e:
+        print(f"[brainstem] Could not fetch models (using defaults): {e}")
+        _models_fetched = True
 
 # ── GitHub token ──────────────────────────────────────────────────────────────
 
@@ -688,7 +726,8 @@ def login_status():
 
 @app.route("/models", methods=["GET"])
 def list_models():
-    """List available models and current selection."""
+    """List available models and current selection. Fetches from Copilot API on first call."""
+    _fetch_copilot_models()
     return jsonify({"models": AVAILABLE_MODELS, "current": MODEL})
 
 @app.route("/models/set", methods=["POST"])
@@ -697,6 +736,7 @@ def set_model():
     global MODEL
     data = request.get_json(force=True) or {}
     new_model = data.get("model", "").strip()
+    _fetch_copilot_models()
     valid_ids = [m["id"] for m in AVAILABLE_MODELS]
     if new_model not in valid_ids:
         return jsonify({"error": f"Unknown model. Available: {valid_ids}"}), 400
