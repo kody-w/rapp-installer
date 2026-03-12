@@ -7,6 +7,7 @@ set -e
 BRAINSTEM_HOME="$HOME/.brainstem"
 BRAINSTEM_BIN="$HOME/.local/bin"
 REPO_URL="https://github.com/kody-w/rapp-installer.git"
+REMOTE_VERSION_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
 
 # Colors
 RED='\033[0;31m'
@@ -86,6 +87,59 @@ install_python() {
     fi
 }
 
+# Compare two semver strings. Returns 0 if $1 > $2, 1 otherwise.
+version_gt() {
+    local IFS=.
+    local i a=($1) b=($2)
+    for ((i=0; i<${#a[@]}; i++)); do
+        local va=${a[i]:-0}
+        local vb=${b[i]:-0}
+        if (( va > vb )); then return 0; fi
+        if (( va < vb )); then return 1; fi
+    done
+    return 1  # equal
+}
+
+check_for_upgrade() {
+    local version_file="$BRAINSTEM_HOME/src/rapp_brainstem/VERSION"
+
+    # No existing install — always proceed
+    if [ ! -f "$version_file" ]; then
+        return 0
+    fi
+
+    local local_version
+    local_version=$(cat "$version_file" 2>/dev/null | tr -d '[:space:]')
+
+    # Fetch remote version
+    local remote_version
+    remote_version=$(curl -fsSL "$REMOTE_VERSION_URL" 2>/dev/null | tr -d '[:space:]') || true
+
+    if [[ -z "$remote_version" ]]; then
+        echo -e "  ${YELLOW}⚠${NC} Could not check remote version — upgrading anyway"
+        return 0
+    fi
+
+    echo -e "  Local version:  ${CYAN}${local_version}${NC}"
+    echo -e "  Remote version: ${CYAN}${remote_version}${NC}"
+
+    if [[ "$local_version" == "$remote_version" ]]; then
+        echo ""
+        echo -e "  ${GREEN}✓ Already up to date (v${local_version})${NC}"
+        echo ""
+        return 1  # no upgrade needed
+    fi
+
+    if version_gt "$remote_version" "$local_version"; then
+        echo -e "  ${YELLOW}⬆${NC} Upgrade available: ${local_version} → ${remote_version}"
+        return 0
+    fi
+
+    echo -e "  ${GREEN}✓ Already up to date (v${local_version})${NC}"
+    echo ""
+    return 1
+}
+
 check_prereqs() {
     echo "Checking prerequisites..."
 
@@ -119,6 +173,45 @@ check_prereqs() {
         else
             echo -e "  ${RED}✗${NC} Git required — install from https://git-scm.com"
             exit 1
+        fi
+    fi
+
+    # GitHub CLI (required for Copilot token auth)
+    if command -v gh &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} GitHub CLI $(gh --version | head -1 | awk '{print $3}')"
+    else
+        echo -e "  ${YELLOW}⚠${NC} GitHub CLI not found, installing..."
+        local os_type=$(detect_os)
+        if [[ "$os_type" == "macos" ]]; then
+            if command -v brew &> /dev/null; then
+                brew install gh
+            else
+                echo -e "  ${RED}✗${NC} Homebrew required to install gh — install from https://cli.github.com"
+                exit 1
+            fi
+        elif [[ "$os_type" == "linux" ]]; then
+            if command -v apt-get &> /dev/null; then
+                (type -p wget >/dev/null || sudo apt-get install -y wget) \
+                    && sudo mkdir -p -m 755 /etc/apt/keyrings \
+                    && out=$(mktemp) && wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+                    && cat "$out" | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+                    && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+                    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+                    && sudo apt-get update && sudo apt-get install -y gh
+            elif command -v dnf &> /dev/null; then
+                sudo dnf install -y 'dnf-command(config-manager)' \
+                    && sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo \
+                    && sudo dnf install -y gh
+            else
+                echo -e "  ${RED}✗${NC} Cannot auto-install GitHub CLI on this system"
+                echo "    Install manually from https://cli.github.com"
+                exit 1
+            fi
+        fi
+        if command -v gh &> /dev/null; then
+            echo -e "  ${GREEN}✓${NC} GitHub CLI installed"
+        else
+            echo -e "  ${YELLOW}!${NC} GitHub CLI not installed — you can install later from https://cli.github.com"
         fi
     fi
 }
@@ -188,15 +281,27 @@ create_env() {
 
 main() {
     print_banner
+
+    # Check if this is an upgrade of an existing install
+    if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
+        echo "Checking for updates..."
+        if ! check_for_upgrade; then
+            exit 0
+        fi
+    fi
+
     check_prereqs
     install_brainstem
     setup_deps
     install_cli
     create_env
 
+    local installed_version
+    installed_version=$(cat "$BRAINSTEM_HOME/src/rapp_brainstem/VERSION" 2>/dev/null | tr -d '[:space:]')
+
     echo ""
     echo "═══════════════════════════════════════════════════"
-    echo -e "  ${GREEN}✓ RAPP Brainstem installed!${NC}"
+    echo -e "  ${GREEN}✓ RAPP Brainstem v${installed_version} installed!${NC}"
     echo "═══════════════════════════════════════════════════"
     echo ""
     echo "  Get started:"
