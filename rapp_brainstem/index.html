@@ -199,26 +199,47 @@
     padding: 4px 8px;
   }
 
+  .agent-logs-wrapper {
+    margin-top: 10px;
+    border: 1px solid #3fb950;
+    border-radius: 8px;
+    overflow: hidden;
+    animation: logsAppear 0.3s ease-out;
+  }
+  @keyframes logsAppear {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .logs-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #0d1117;
+    color: #3fb950;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: "SF Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .logs-label:hover { background: #161b22; }
+  .logs-label .arrow { transition: transform 0.2s; font-size: 9px; }
+  .logs-label .arrow.open { transform: rotate(90deg); }
   .agent-logs {
-    margin-top: 8px;
     padding: 8px 12px;
     background: #0d1117;
-    border: 1px solid #3fb950;
-    border-radius: 6px;
     font-size: 11px;
     color: #3fb950;
     font-family: "SF Mono", monospace;
     white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid #21262d;
   }
-  .logs-label {
-    font-size: 10px;
-    color: #3fb950;
-    font-weight: 600;
-    font-family: "SF Mono", monospace;
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
+  .agent-logs.collapsed { display: none; }
 
   .typing {
     display: flex; gap: 4px; align-items: center; padding: 4px 0;
@@ -578,14 +599,21 @@
     right.appendChild(bubble);
 
     if (logs) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'agent-logs-wrapper';
       const label = document.createElement('div');
       label.className = 'logs-label';
-      label.textContent = '⚡ agent logs';
+      label.innerHTML = '<span class="arrow open">▶</span> ⚡ agent logs';
       const logBox = document.createElement('div');
       logBox.className = 'agent-logs';
       logBox.textContent = logs;
-      right.appendChild(label);
-      right.appendChild(logBox);
+      label.onclick = () => {
+        logBox.classList.toggle('collapsed');
+        label.querySelector('.arrow').classList.toggle('open');
+      };
+      wrapper.appendChild(label);
+      wrapper.appendChild(logBox);
+      right.appendChild(wrapper);
     }
 
     wrap.appendChild(avatar);
@@ -637,6 +665,7 @@
 
       const d = await r.json();
       removeTyping();
+      if (d.agent_logs) console.log('[brainstem-ui] agent_logs:', d.agent_logs.slice(0, 200));
 
       if (d.error) {
         if (d.error.startsWith('NO_COPILOT_ACCESS:')) {
