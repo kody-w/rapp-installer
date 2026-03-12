@@ -294,36 +294,18 @@ create_env() {
     fi
 }
 
-main() {
-    print_banner
-
-    # Check if this is an upgrade of an existing install
-    if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
-        echo "Checking for updates..."
-        if ! check_for_upgrade; then
-            exit 0
-        fi
-    fi
-
-    check_prereqs
-    install_brainstem
-    setup_deps
-    install_cli
-    create_env
-
-    # Make sure brainstem and gh are on PATH for this session
+launch_brainstem() {
     export PATH="$BRAINSTEM_BIN:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-    local installed_version
-    installed_version=$(cat "$BRAINSTEM_HOME/src/rapp_brainstem/VERSION" 2>/dev/null | tr -d '[:space:]')
+    # Find Python for this session
+    if [[ -z "$PYTHON_CMD" ]]; then
+        PYTHON_CMD=$(find_python) || true
+    fi
 
-    echo ""
-    echo "═══════════════════════════════════════════════════"
-    echo -e "  ${GREEN}✓ RAPP Brainstem v${installed_version} installed!${NC}"
-    echo "═══════════════════════════════════════════════════"
-    echo ""
-
-    # --- White-glove setup: authenticate and launch ---
+    # Ensure Homebrew tools are visible
+    if [[ "$(detect_os)" == "macos" ]]; then
+        ensure_brew_on_path
+    fi
 
     # Step 1: GitHub authentication
     if command -v gh &> /dev/null; then
@@ -353,10 +335,43 @@ main() {
 
     cd "$BRAINSTEM_HOME/src/rapp_brainstem"
 
-    # Open the browser after a short delay (server needs a moment to start)
+    # Open the browser after a short delay
     (sleep 3 && open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null) &
 
     exec "$PYTHON_CMD" brainstem.py
+}
+
+main() {
+    print_banner
+
+    # Check if this is an upgrade of an existing install
+    if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
+        echo "Checking for updates..."
+        if ! check_for_upgrade; then
+            # Already up to date — just launch
+            launch_brainstem
+        fi
+    fi
+
+    check_prereqs
+    install_brainstem
+    setup_deps
+    install_cli
+    create_env
+
+    # Make sure brainstem and gh are on PATH for this session
+    export PATH="$BRAINSTEM_BIN:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+    local installed_version
+    installed_version=$(cat "$BRAINSTEM_HOME/src/rapp_brainstem/VERSION" 2>/dev/null | tr -d '[:space:]')
+
+    echo ""
+    echo "═══════════════════════════════════════════════════"
+    echo -e "  ${GREEN}✓ RAPP Brainstem v${installed_version} installed!${NC}"
+    echo "═══════════════════════════════════════════════════"
+    echo ""
+
+    launch_brainstem
 }
 
 main
