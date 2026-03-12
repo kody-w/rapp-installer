@@ -17,7 +17,10 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_VERTICAL_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
-from azure.storage.file import FileService
+try:
+    from azure.storage.file import FileService
+except ImportError:
+    FileService = None
 
 
 class PowerPointAgent(BasicAgent):
