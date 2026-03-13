@@ -146,10 +146,11 @@
   .msg.system { align-self: center; }
 
   .avatar {
-    width: 32px; height: 32px; border-radius: 50%;
+    width: 34px; height: 34px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; color: #8b949e; background: #21262d;
   }
+  .avatar .icon { width: 18px; height: 18px; }
   .msg.user .avatar { background: #1f6feb; color: #fff; }
   .msg.assistant .avatar { background: #161b22; border: 1px solid #30363d; color: #58a6ff; }
 
@@ -188,7 +189,7 @@
     font-size: 12px; border: none; padding: 4px 8px;
   }
 
-  /* ── Agent logs (dev mode only) ── */
+  /* ── Agent activity indicator ── */
   .agent-logs-wrapper {
     margin-top: 10px; border: 1px solid #30363d;
     border-radius: 6px; overflow: hidden;
@@ -210,6 +211,7 @@
   .logs-label:hover { background: #161b22; color: #e6edf3; }
   .logs-label .arrow { transition: transform 0.2s; font-size: 8px; }
   .logs-label .arrow.open { transform: rotate(90deg); }
+  .logs-label .agent-name { color: #d2a8ff; }
   .agent-logs {
     padding: 8px 10px; background: #0d1117;
     font-size: 10px; color: #7ee787;
@@ -376,8 +378,8 @@
   if (devMode) document.body.classList.add('dev-mode');
 
   // SVG fragments for reuse
-  const SVG_BRAIN = '<svg viewBox="0 0 24 24"><path d="M13 3C9.2 3 6.2 5.9 6 9.7L4.1 12.6c-.3.5.1 1.1.7 1.1H6v3c0 1.1.9 2 2 2h1v3h7v-4.9c2.8-1.5 5-4.8 5-8.1 0-5-4.5-8-8-5zM9.5 9C8.7 9 8 8.3 8 7.5S8.7 6 9.5 6s1.5.7 1.5 1.5S10.3 9 9.5 9zm5 0c-.8 0-1.5-.7-1.5-1.5S13.7 6 14.5 6s1.5.7 1.5 1.5S15.3 9 14.5 9z"/></svg>';
-  const SVG_USER = '<svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10.5 5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zm.061 3.073a4 4 0 10-5.123 0 6.004 6.004 0 00-3.431 5.142.75.75 0 001.498.07 4.5 4.5 0 018.99 0 .75.75 0 101.498-.07 6.004 6.004 0 00-3.432-5.142z"/></svg>';
+  const SVG_BRAIN = '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.22.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
+  const SVG_USER = '<svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
 
   function toggleDevMode() {
     devMode = !devMode;
@@ -580,12 +582,17 @@
 
     if (logs) {
       const wrapper = document.createElement('div');
-      wrapper.className = 'agent-logs-wrapper' + (devMode ? '' : ' hidden');
+      wrapper.className = 'agent-logs-wrapper';
+      // Extract agent names from log lines like "[AgentName] result"
+      const agentNames = [...new Set((logs.match(/\[([^\]]+)\]/g) || []).map(m => m.slice(1, -1)))];
       const label = document.createElement('div');
       label.className = 'logs-label';
-      label.innerHTML = '<span class="arrow open">\u25B6</span> agent activity';
+      const nameSpan = agentNames.length > 0
+        ? ' <span class="agent-name">' + agentNames.join(', ') + '</span>'
+        : '';
+      label.innerHTML = '<span class="arrow">\u25B6</span> agent called' + nameSpan;
       const logBox = document.createElement('div');
-      logBox.className = 'agent-logs';
+      logBox.className = 'agent-logs collapsed';
       logBox.textContent = logs;
       label.onclick = () => {
         logBox.classList.toggle('collapsed');
