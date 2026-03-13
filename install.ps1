@@ -172,18 +172,32 @@ function Install-Brainstem {
     Write-Host "  [OK] Source code ready" -ForegroundColor Green
 }
 
+function Install-PipDeps {
+    # Install pip deps, ignoring PATH warnings that PowerShell treats as errors
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    $result = & python -m pip install -r requirements.txt 2>&1
+    $ErrorActionPreference = $prevEAP
+    # Check if it actually worked
+    $prevEAP2 = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & python -c "import flask, flask_cors, requests, dotenv" 2>&1 | Out-Null
+    $ok = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $prevEAP2
+    return $ok
+}
+
 function Setup-Dependencies {
     Write-Host ""
     Write-Host "Installing dependencies..."
     Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
-    try {
-        # Run pip with SilentlyContinue to suppress PATH warnings that PowerShell treats as errors
-        $output = & python -m pip install -r requirements.txt --quiet 2>&1
-        # Only show real errors, not warnings
-        $errors = $output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.ToString() -notmatch "WARNING:" }
-        if ($errors) { $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow } }
-    } catch {
-        Write-Host "  [!] pip had warnings (non-fatal)" -ForegroundColor Yellow
+    $ok = Install-PipDeps
+    if (-not $ok) {
+        Write-Host "  [..] Retrying with --user flag..." -ForegroundColor Yellow
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        & python -m pip install -r requirements.txt --user 2>&1 | Out-Null
+        $ErrorActionPreference = $prevEAP
     }
     Pop-Location
     Write-Host "  [OK] Dependencies installed" -ForegroundColor Green
@@ -364,16 +378,18 @@ function Launch-Brainstem {
     Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
 
     # Ensure deps are installed (handles first-run failure or stale install)
-    $depsOk = $false
-    try {
-        python -c "import flask, requests, dotenv" 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { $depsOk = $true }
-    } catch {}
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & python -c "import flask, flask_cors, requests, dotenv" 2>&1 | Out-Null
+    $depsOk = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $prevEAP
     if (-not $depsOk) {
         Write-Host "  [..] Installing missing dependencies..." -ForegroundColor Yellow
-        try {
-            & python -m pip install -r requirements.txt --quiet 2>&1 | Out-Null
-        } catch {}
+        $prevEAP2 = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        & python -m pip install -r requirements.txt 2>&1 | Out-Null
+        & python -m pip install -r requirements.txt --user 2>&1 | Out-Null
+        $ErrorActionPreference = $prevEAP2
     }
 
     # Open browser after a delay
