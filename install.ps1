@@ -176,11 +176,15 @@ function Setup-Dependencies {
     Write-Host ""
     Write-Host "Installing dependencies..."
     Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
-    # Use $ErrorActionPreference = Continue to ignore pip PATH warnings
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    python -m pip install -r requirements.txt --quiet 2>&1 | Where-Object { $_ -notmatch "WARNING:" } | Out-Null
-    $ErrorActionPreference = $prevEAP
+    try {
+        # Run pip with SilentlyContinue to suppress PATH warnings that PowerShell treats as errors
+        $output = & python -m pip install -r requirements.txt --quiet 2>&1
+        # Only show real errors, not warnings
+        $errors = $output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.ToString() -notmatch "WARNING:" }
+        if ($errors) { $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow } }
+    } catch {
+        Write-Host "  [!] pip had warnings (non-fatal)" -ForegroundColor Yellow
+    }
     Pop-Location
     Write-Host "  [OK] Dependencies installed" -ForegroundColor Green
 }
@@ -358,6 +362,19 @@ function Launch-Brainstem {
     Write-Host ""
 
     Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
+
+    # Ensure deps are installed (handles first-run failure or stale install)
+    $depsOk = $false
+    try {
+        python -c "import flask, requests, dotenv" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $depsOk = $true }
+    } catch {}
+    if (-not $depsOk) {
+        Write-Host "  [..] Installing missing dependencies..." -ForegroundColor Yellow
+        try {
+            & python -m pip install -r requirements.txt --quiet 2>&1 | Out-Null
+        } catch {}
+    }
 
     # Open browser after a delay
     Start-Job -ScriptBlock { Start-Sleep -Seconds 3; Start-Process "http://localhost:7071" } | Out-Null
