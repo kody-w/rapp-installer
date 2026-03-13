@@ -176,7 +176,11 @@ function Setup-Dependencies {
     Write-Host ""
     Write-Host "Installing dependencies..."
     Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
-    python -m pip install -r requirements.txt --quiet 2>&1 | Out-Null
+    # Use $ErrorActionPreference = Continue to ignore pip PATH warnings
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    python -m pip install -r requirements.txt --quiet 2>&1 | Where-Object { $_ -notmatch "WARNING:" } | Out-Null
+    $ErrorActionPreference = $prevEAP
     Pop-Location
     Write-Host "  [OK] Dependencies installed" -ForegroundColor Green
 }
@@ -223,6 +227,144 @@ function Create-Env {
     }
 }
 
+function Launch-Brainstem {
+    # Always pull latest before launching
+    if (Test-Path "$BRAINSTEM_HOME\src\.git") {
+        Push-Location "$BRAINSTEM_HOME\src"
+        try { git pull --quiet 2>&1 | Out-Null } catch {}
+        Pop-Location
+    }
+
+    $tokenFile = "$BRAINSTEM_HOME\src\rapp_brainstem\.copilot_token"
+    $clientId = "Iv1.b507a08c87ecfe98"
+
+    # Check if already authenticated
+    $needsAuth = $true
+    if (Test-Path $tokenFile) {
+        try {
+            $tokenData = Get-Content $tokenFile -Raw | ConvertFrom-Json
+            $savedToken = $tokenData.access_token
+            if ($savedToken) {
+                $authPrefix = if ($savedToken.StartsWith("ghu_")) { "token" } else { "Bearer" }
+                $headers = @{
+                    "Authorization" = "$authPrefix $savedToken"
+                    "Accept" = "application/json"
+                    "Editor-Version" = "vscode/1.95.0"
+                    "Editor-Plugin-Version" = "copilot/1.0.0"
+                }
+                try {
+                    $checkResp = Invoke-WebRequest -Uri "https://api.github.com/copilot_internal/v2/token" -Headers $headers -UseBasicParsing -TimeoutSec 10 -ErrorAction SilentlyContinue
+                    if ($checkResp.StatusCode -eq 200) {
+                        Write-Host "  [OK] Already authenticated with GitHub Copilot" -ForegroundColor Green
+                        $needsAuth = $false
+                    }
+                } catch {
+                    Write-Host "  [..] Saved token expired — re-authenticating..." -ForegroundColor Yellow
+                    Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {
+            Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($needsAuth) {
+        Write-Host ""
+        Write-Host "  Authenticating with GitHub Copilot..." -ForegroundColor Cyan
+        Write-Host ""
+
+        try {
+            $deviceResp = Invoke-RestMethod -Uri "https://github.com/login/device/code" -Method Post -ContentType "application/x-www-form-urlencoded" -Body "client_id=$clientId" -Headers @{"Accept"="application/json"} -TimeoutSec 10
+
+            $userCode = $deviceResp.user_code
+            $deviceCode = $deviceResp.device_code
+            $interval = if ($deviceResp.interval) { $deviceResp.interval } else { 5 }
+            $verifyUri = $deviceResp.verification_uri
+
+            if (-not $userCode -or -not $deviceCode) {
+                Write-Host "  [!] Could not start auth — sign in at http://localhost:7071/login" -ForegroundColor Yellow
+            } else {
+                Write-Host "  ┌─────────────────────────────────────────┐"
+                Write-Host "  │  Your code: " -NoNewline; Write-Host $userCode -ForegroundColor Cyan -NoNewline; Write-Host "                  │"
+                Write-Host "  └─────────────────────────────────────────┘"
+                Write-Host ""
+                Write-Host "  Opening browser to authorize..."
+
+                Start-Process $verifyUri
+                Write-Host "  Waiting for authorization..."
+                Write-Host ""
+
+                for ($i = 0; $i -lt 60; $i++) {
+                    Start-Sleep -Seconds $interval
+                    try {
+                        $pollResp = Invoke-RestMethod -Uri "https://github.com/login/oauth/access_token" -Method Post -ContentType "application/x-www-form-urlencoded" -Body "client_id=$clientId&device_code=$deviceCode&grant_type=urn:ietf:params:oauth:grant-type:device_code" -Headers @{"Accept"="application/json"} -TimeoutSec 10
+
+                        if ($pollResp.access_token) {
+                            $tokenJson = @{ access_token = $pollResp.access_token }
+                            if ($pollResp.refresh_token) { $tokenJson.refresh_token = $pollResp.refresh_token }
+                            $tokenJson | ConvertTo-Json | Set-Content $tokenFile
+
+                            # Validate Copilot access
+                            $authPrefix = if ($pollResp.access_token.StartsWith("ghu_")) { "token" } else { "Bearer" }
+                            $headers = @{
+                                "Authorization" = "$authPrefix $($pollResp.access_token)"
+                                "Accept" = "application/json"
+                                "Editor-Version" = "vscode/1.95.0"
+                                "Editor-Plugin-Version" = "copilot/1.0.0"
+                            }
+                            try {
+                                $copilotCheck = Invoke-WebRequest -Uri "https://api.github.com/copilot_internal/v2/token" -Headers $headers -UseBasicParsing -TimeoutSec 10 -ErrorAction SilentlyContinue
+                                if ($copilotCheck.StatusCode -eq 200) {
+                                    Write-Host "  [OK] Authenticated — Copilot access confirmed" -ForegroundColor Green
+                                }
+                            } catch {
+                                $statusCode = $_.Exception.Response.StatusCode.value__
+                                if ($statusCode -eq 403) {
+                                    Write-Host ""
+                                    Write-Host "  [X] This GitHub account does NOT have Copilot access." -ForegroundColor Red
+                                    Write-Host ""
+                                    Write-Host "  Either:"
+                                    Write-Host "    1. Sign up for Copilot: " -NoNewline; Write-Host "https://github.com/github-copilot/signup" -ForegroundColor Cyan
+                                    Write-Host "    2. Re-run this installer and sign in with a different account"
+                                    Write-Host ""
+                                    Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
+                                } else {
+                                    Write-Host "  [OK] Authenticated with GitHub" -ForegroundColor Green
+                                }
+                            }
+                            break
+                        }
+
+                        $error_code = $pollResp.error
+                        if ($error_code -eq "expired_token") {
+                            Write-Host "  [!] Auth timed out — sign in at http://localhost:7071/login" -ForegroundColor Yellow
+                            break
+                        }
+                        if ($error_code -ne "authorization_pending" -and $error_code -ne "slow_down" -and $error_code) {
+                            Write-Host "  [!] Auth error: $error_code" -ForegroundColor Yellow
+                            break
+                        }
+                    } catch {}
+                }
+            }
+        } catch {
+            Write-Host "  [!] Could not start auth — sign in at http://localhost:7071/login" -ForegroundColor Yellow
+        }
+    }
+
+    # Launch the server
+    Write-Host ""
+    Write-Host "  Starting RAPP Brainstem..." -ForegroundColor Cyan
+    Write-Host ""
+
+    Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
+
+    # Open browser after a delay
+    Start-Job -ScriptBlock { Start-Sleep -Seconds 3; Start-Process "http://localhost:7071" } | Out-Null
+
+    python brainstem.py
+}
+
 function Main {
     Print-Banner
 
@@ -230,6 +372,8 @@ function Main {
     if (Test-Path "$BRAINSTEM_HOME\src\.git") {
         Write-Host "Checking for updates..."
         if (-not (Check-ForUpgrade)) {
+            # Already up to date — just launch
+            Launch-Brainstem
             return
         }
     }
@@ -249,12 +393,8 @@ function Main {
     Write-Host "  [OK] RAPP Brainstem v$installedVersion installed!" -ForegroundColor Green
     Write-Host "===================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Get started:"
-    Write-Host "    gh auth login        " -NoNewline; Write-Host "# authenticate with GitHub" -ForegroundColor Gray
-    Write-Host "    brainstem            " -NoNewline; Write-Host "# start the server (localhost:7071)" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  Then open http://localhost:7071 in your browser."
-    Write-Host ""
+
+    Launch-Brainstem
 }
 
 Main
