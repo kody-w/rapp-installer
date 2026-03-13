@@ -718,6 +718,16 @@
       const d = await r.json();
       voiceMode = d.voice_mode;
       updateVoiceBtn();
+      if (voiceMode) {
+        appendMsg('system', '');
+        const last = document.querySelector('#chat .msg.system:last-child .bubble');
+        last.innerHTML = '🎙️ <strong>Voice mode enabled.</strong> Responses will be read aloud using your device\'s built-in voice. ' +
+          'Want a better sounding voice? Add an ElevenLabs or OpenAI TTS key in your <code>.env</code> file.';
+        speakText('Voice mode enabled.');
+      } else {
+        window.speechSynthesis.cancel();
+        appendMsg('system', '🔇 Voice mode disabled.');
+      }
     } catch(e) { console.error('Voice toggle failed:', e); }
   }
 
