@@ -370,6 +370,12 @@ create_env() {
 launch_brainstem() {
     export PATH="$BRAINSTEM_BIN:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+    # Always pull latest code before launching
+    if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
+        cd "$BRAINSTEM_HOME/src"
+        git pull --quiet 2>/dev/null || true
+    fi
+
     local venv_python="$VENV_DIR/bin/python"
 
     # Ensure venv exists (handles edge case where only launch is called)
