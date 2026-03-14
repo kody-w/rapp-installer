@@ -468,6 +468,8 @@
         <span class="icon"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"/></svg></span>
         Export
       </button>
+      <button class="toolbar-link" onclick="document.getElementById('chat-import').click()" title="Import transcript">Import</button>
+      <input type="file" id="chat-import" accept=".json" style="display:none" onchange="importChat(event)">
       <button class="toolbar-link" onclick="clearChat()">Clear</button>
       <button class="toolbar-link dev-only" onclick="toggleDevMode()" id="dev-toggle">Dev</button>
     </div>
@@ -1320,6 +1322,59 @@
     a.download = `brainstem-chat-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function importChat(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    event.target.value = '';
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const data = JSON.parse(e.target.result);
+        const turns = data.turns || [];
+        if (!turns.length) { alert('No turns found in file.'); return; }
+
+        // Clear current chat and restore session
+        history = [];
+        fullTranscript = [];
+        const chat = document.getElementById('chat');
+        chat.innerHTML = '';
+
+        sessionId = data.session_id || null;
+        const sidEl = document.getElementById('session-id');
+        if (sidEl) sidEl.textContent = sessionId ? sessionId.slice(0, 8) + '...' : '\u2014';
+
+        if (data.model) {
+          const modelSelect = document.getElementById('model-select');
+          if (modelSelect) {
+            for (const opt of modelSelect.options) {
+              if (opt.value === data.model) { modelSelect.value = data.model; break; }
+            }
+          }
+        }
+
+        // Replay each turn into the UI
+        for (const turn of turns) {
+          const role = turn.role || 'user';
+          const content = turn.content || '';
+          if (role === 'user') {
+            history.push({ role: 'user', content });
+            appendMsg('user', content);
+          } else if (role === 'assistant') {
+            history.push({ role: 'assistant', content });
+            const logs = turn.agent_logs && turn.agent_logs.trim() ? turn.agent_logs : null;
+            appendMsg('assistant', content, logs);
+          }
+          fullTranscript.push(turn);
+        }
+
+        appendMsg('system', `Imported ${turns.length} turns from ${data.exported_at ? new Date(data.exported_at).toLocaleString() : 'file'}`);
+      } catch (err) {
+        alert('Failed to import: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
   }
 </script>
 </body>
