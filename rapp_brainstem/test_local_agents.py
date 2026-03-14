@@ -128,10 +128,15 @@ class TestAgentLoading(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.mkdtemp()
+        import local_storage
+        self._orig_data_dir = local_storage._DATA_DIR
+        local_storage._DATA_DIR = self._tmp
         import brainstem
         brainstem._shims_registered = False
 
     def tearDown(self):
+        import local_storage
+        local_storage._DATA_DIR = self._orig_data_dir
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_load_agent_with_azure_import(self):

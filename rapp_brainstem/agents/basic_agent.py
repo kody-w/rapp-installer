@@ -18,6 +18,11 @@ class BasicAgent:
     def perform(self, **kwargs):
         return "Not implemented."
 
+    def system_context(self):
+        """Optional: return a string to inject into the system prompt each turn.
+        Override in agents that provide persistent context (e.g. memory)."""
+        return None
+
     def to_tool(self):
         """Returns OpenAI function-calling tool definition."""
         return {

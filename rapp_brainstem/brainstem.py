@@ -57,7 +57,7 @@ AVAILABLE_MODELS = [
 ]
 
 # Models that don't support OpenAI-style tool_choice parameter
-_NO_TOOL_CHOICE_MODELS = {"claude-sonnet-4", "claude-"}
+_NO_TOOL_CHOICE_MODELS = set()
 _models_fetched = False
 
 def _fetch_copilot_models():
@@ -87,7 +87,7 @@ def _fetch_copilot_models():
                     mname = m.get("name", mid)
                     if mid:
                         new_models.append({"id": mid, "name": mname})
-                        if "claude" in mid.lower() or "o1" in mid.lower():
+                        if "o1" in mid.lower():
                             _NO_TOOL_CHOICE_MODELS.add(mid)
                 if new_models:
                     AVAILABLE_MODELS = new_models
@@ -476,6 +476,19 @@ def _register_shims():
             ba_mod.BasicAgent = _BA
             sys.modules["agents.basic_agent"] = ba_mod
             sys.modules["agents"].basic_agent = ba_mod
+        # Shim: openrappter.agents.basic_agent → same BasicAgent
+        if "openrappter" not in sys.modules:
+            or_mod = types.ModuleType("openrappter")
+            or_mod.__path__ = [brainstem_dir]
+            sys.modules["openrappter"] = or_mod
+        if "openrappter.agents" not in sys.modules:
+            or_agents = types.ModuleType("openrappter.agents")
+            or_agents.__path__ = [agents_dir]
+            or_agents.basic_agent = sys.modules["agents.basic_agent"]
+            sys.modules["openrappter.agents"] = or_agents
+            sys.modules["openrappter"].agents = or_agents
+        if "openrappter.agents.basic_agent" not in sys.modules:
+            sys.modules["openrappter.agents.basic_agent"] = sys.modules["agents.basic_agent"]
     except ImportError as e:
         print(f"[brainstem] Warning: Could not load BasicAgent: {e}")
         pass
@@ -586,6 +599,8 @@ def call_copilot(messages, tools=None):
         if MODEL not in _NO_TOOL_CHOICE_MODELS:
             body["tool_choice"] = "auto"
 
+    print(f"[brainstem] API call: model={MODEL}, tools={len(tools) if tools else 0}, tool_choice={body.get('tool_choice', 'NONE')}")
+
     resp = requests.post(url, headers=headers, json=body, timeout=60)
     if resp.status_code != 200:
         error_detail = resp.text[:500] if resp.text else "No details"
@@ -598,11 +613,39 @@ def call_copilot(messages, tools=None):
                 body["tool_choice"] = "auto"
             resp = requests.post(url, headers=headers, json=body, timeout=60)
     resp.raise_for_status()
-    return resp.json()
+    result = resp.json()
+
+    # ── Normalize multi-choice responses ──────────────────────────────────────
+    # Some models (e.g. Claude via Copilot API) split text and tool_calls into
+    # separate choices.  Merge them into a single choice so the rest of the
+    # codebase can treat the response uniformly.
+    choices = result.get("choices", [])
+    if len(choices) > 1:
+        merged = {"role": "assistant", "content": None, "tool_calls": []}
+        for c in choices:
+            m = c.get("message", {})
+            if m.get("content"):
+                merged["content"] = (merged["content"] or "") + m["content"]
+            if m.get("tool_calls"):
+                merged["tool_calls"].extend(m["tool_calls"])
+        if not merged["tool_calls"]:
+            del merged["tool_calls"]
+        # Prefer the finish_reason that indicates tool_calls if present
+        fr = "tool_calls" if merged.get("tool_calls") else choices[0].get("finish_reason", "stop")
+        result["choices"] = [{"message": merged, "finish_reason": fr}]
+
+    # Debug logging
+    choice = result.get("choices", [{}])[0]
+    msg = choice.get("message", {})
+    fr = choice.get("finish_reason", "")
+    has_tools = bool(msg.get("tool_calls"))
+    print(f"[brainstem] API response: finish_reason={fr}, has_tool_calls={has_tools}, content_len={len(msg.get('content') or '')}")
+    if has_tools:
+        print(f"[brainstem]   tool_calls: {[tc.get('function',{}).get('name','?') for tc in msg['tool_calls']]}")
+
+    return result
 
 # ── Agent execution ───────────────────────────────────────────────────────────
-
-_MEMORY_AGENTS = {"ManageMemory", "ContextMemory"}
 
 
 def run_tool_calls(tool_calls, agents, session_id=None):
@@ -615,17 +658,14 @@ def run_tool_calls(tool_calls, agents, session_id=None):
         except Exception:
             args = {}
 
-        # Match CommunityRAPP pattern: inject consistent user context for
-        # memory agents so they always read/write the same storage path.
-        if fn_name in _MEMORY_AGENTS:
-            args.pop("user_guid", None)  # strip LLM-invented GUIDs
-            print(f"[brainstem] {fn_name} args: {json.dumps(args)[:200]}")
+        print(f"[brainstem] {fn_name} args: {json.dumps(args)[:200]}")
 
         agent = agents.get(fn_name)
         if agent:
             try:
                 result = agent.perform(**args)
-                logs.append(f"[{fn_name}] {result}")
+                log_preview = result if len(str(result)) <= 500 else str(result)[:500] + '… (truncated)'
+                logs.append(f"[{fn_name}] {log_preview}")
             except Exception as e:
                 result = f"Error: {e}"
                 logs.append(f"[{fn_name}] ERROR: {e}")
@@ -658,29 +698,17 @@ def chat():
         agents = load_agents()
         tools  = [a.to_tool() for a in agents.values()] if agents else None
 
-        # ── Load persistent memory into system prompt (matches CommunityRAPP) ──
-        memory_context = ""
-        ctx_agent = agents.get("ContextMemory")
-        if ctx_agent:
+        # ── Collect system context from any agent that provides it ──
+        extra_context = ""
+        for agent in agents.values():
             try:
-                shared_mem = str(ctx_agent.perform(full_recall=True))
-                memory_context = f"""
-<memory>
-{shared_mem}
-</memory>
-
-<memory_instructions>
-- The above are stored memories from previous conversations
-- Use them to provide continuity and personalized responses
-- When the user asks what you remember, reference these memories
-- Use ManageMemory to store new important facts the user shares
-</memory_instructions>
-"""
-                print(f"[brainstem] Memory loaded: {len(shared_mem)} chars")
+                ctx = agent.system_context()
+                if ctx:
+                    extra_context += "\n" + ctx
             except Exception as e:
-                print(f"[brainstem] Memory load failed: {e}")
+                print(f"[brainstem] system_context failed for {agent.name}: {e}")
 
-        system_content = soul + memory_context
+        system_content = soul + extra_context
         if VOICE_MODE:
             system_content += "\n\nIMPORTANT: End every response with |||VOICE||| followed by a concise, conversational version of your answer suitable for text-to-speech. Keep the voice version under 2-3 sentences. The part before |||VOICE||| should be the full formatted response."
 

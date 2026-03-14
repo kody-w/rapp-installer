@@ -9,7 +9,7 @@ class ManageMemoryAgent(BasicAgent):
         self.name = 'ManageMemory'
         self.metadata = {
             "name": self.name,
-            "description": "Manages memories in the conversation system. Saves important information to memory for future reference.",
+            "description": "Saves information to persistent memory for future conversations. You MUST call this tool whenever the user asks you to remember something, shares personal facts (name, preferences, birthdays, etc.), or tells you something they expect you to recall later. Do not just acknowledge — call this tool or the information will be lost.",
             "parameters": {
                 "type": "object",
                 "properties": {

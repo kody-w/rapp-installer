@@ -479,7 +479,8 @@
 </footer>
 
 <script>
-  const API = '';
+  // Auto-detect: if served from a different port (e.g. Live Server), proxy to brainstem on 7071
+  const API = location.port === '7071' ? '' : `${location.protocol}//${location.hostname}:7071`;
   let sessionId = null;
   let history = [];
   let fullTranscript = [];

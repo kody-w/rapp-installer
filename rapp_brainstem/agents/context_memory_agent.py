@@ -36,6 +36,24 @@ class ContextMemoryAgent(BasicAgent):
         self.storage_manager = AzureFileStorageManager()
         super().__init__(name=self.name, metadata=self.metadata)
 
+    def system_context(self):
+        """Inject stored memories into the system prompt each turn."""
+        try:
+            memories = self._recall_context(max_messages=50, keywords=[], full_recall=True)
+            if "don't have any memories" in memories or "No memories" in memories:
+                return None
+            return f"""<memory>
+{memories}
+</memory>
+
+<memory_instructions>
+- The above are stored memories from previous conversations
+- Use them to provide continuity and personalized responses
+- When the user asks what you remember, reference these memories
+</memory_instructions>"""
+        except Exception:
+            return None
+
     def perform(self, **kwargs):
         user_guid = kwargs.get('user_guid')
         max_messages = kwargs.get('max_messages', 10)
