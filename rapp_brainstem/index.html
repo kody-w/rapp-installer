@@ -291,6 +291,50 @@
   }
   #model-select:hover { border-color: #58a6ff; }
   #model-select:focus { border-color: #1f6feb; }
+
+  /* ── Voice settings panel ── */
+  #voice-panel {
+    display: none;
+    position: absolute; top: 100%; right: 0; margin-top: 6px;
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px; width: 300px; z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    font-size: 13px;
+  }
+  #voice-panel.open { display: block; }
+  #voice-panel h3 {
+    font-size: 13px; font-weight: 600; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #voice-panel label {
+    display: block; color: #8b949e; font-size: 11px;
+    margin-bottom: 4px; margin-top: 10px;
+  }
+  #voice-panel label:first-of-type { margin-top: 0; }
+  #voice-panel input, #voice-panel select {
+    width: 100%; background: #0d1117; color: #e6edf3;
+    border: 1px solid #30363d; border-radius: 6px;
+    padding: 6px 8px; font-size: 12px;
+    font-family: "SF Mono", monospace;
+    outline: none; transition: border-color 0.15s;
+  }
+  #voice-panel input:focus, #voice-panel select:focus { border-color: #1f6feb; }
+  #voice-panel .panel-row {
+    display: flex; gap: 8px; align-items: center; margin-top: 12px;
+  }
+  #voice-panel .panel-btn {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 6px; padding: 5px 10px; font-size: 11px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  #voice-panel .panel-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  #voice-panel .panel-btn.primary { background: #238636; border-color: #238636; }
+  #voice-panel .panel-btn.primary:hover { background: #2ea043; }
+  #voice-panel .panel-status {
+    font-size: 11px; color: #8b949e; margin-top: 8px;
+    min-height: 16px;
+  }
+  .voice-wrapper { position: relative; }
 </style>
 </head>
 <body>
@@ -335,9 +379,68 @@
     <div class="dot" id="dot"></div>
     <span id="status-text">checking...</span>
     <select id="model-select" onchange="changeModel(this.value)"></select>
-    <button class="icon-btn" id="voice-btn" onclick="toggleVoice()" title="Voice mode off">
-      <span class="icon"><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg></span>
-    </button>
+    <div class="voice-wrapper">
+      <button class="icon-btn" id="voice-btn" onclick="toggleVoice()" title="Voice mode off">
+        <span class="icon"><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg></span>
+      </button>
+      <button class="icon-btn" id="voice-settings-btn" onclick="toggleVoicePanel()" title="Voice settings">
+        <span class="icon"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.183.501.29.417.278.97.423 1.53.27l1.102-.303c.11-.03.175.016.195.046.219.31.41.641.573.989.014.031.022.11-.059.19l-.815.806c-.411.406-.562.957-.53 1.456a4.588 4.588 0 010 .582c-.032.499.119 1.05.53 1.456l.815.806c.08.08.073.159.059.19a6.494 6.494 0 01-.573.99c-.02.029-.086.074-.195.045l-1.103-.303c-.559-.153-1.112-.008-1.529.27-.16.107-.327.204-.5.29-.449.222-.851.628-.998 1.189l-.289 1.105c-.029.11-.1.143-.137.146a6.613 6.613 0 01-1.142 0c-.036-.003-.108-.037-.137-.146l-.289-1.105c-.147-.56-.55-.967-.997-1.189a4.502 4.502 0 01-.501-.29c-.417-.278-.97-.423-1.53-.27l-1.102.303c-.11.03-.175-.016-.195-.046a6.492 6.492 0 01-.573-.989c-.014-.031-.022-.11.059-.19l.815-.806c.411-.406.562-.957.53-1.456a4.587 4.587 0 010-.582c.032-.499-.119-1.05-.53-1.456l-.815-.806c-.08-.08-.073-.159-.059-.19a6.44 6.44 0 01.573-.99c.02-.029.086-.074.195-.045l1.103.303c.559.153 1.112.008 1.529-.27.16-.107.327-.204.5-.29.449-.222.851-.628.998-1.189l.289-1.105c.029-.11.1-.143.137-.146zM8 0c-.236 0-.47.01-.701.03-.743.065-1.29.615-1.458 1.261l-.29 1.106c-.017.066-.078.158-.211.224a5.994 5.994 0 00-.668.386c-.123.082-.233.117-.3.117h-.013l-1.104-.304c-.646-.178-1.314.023-1.71.64a7.994 7.994 0 00-.573.989c-.358.658-.217 1.381.164 1.758l.816.806c.046.046.106.144.098.284a6.095 6.095 0 000 .772c.008.14-.052.238-.098.284l-.816.806c-.38.377-.522 1.1-.164 1.758.145.267.306.524.573.99.396.616 1.064.817 1.71.639l1.104-.304c.068-.019.146-.003.3.117.195.13.4.25.668.387.133.066.194.158.212.224l.289 1.106c.169.646.715 1.196 1.458 1.26a8.094 8.094 0 001.402 0c.743-.064 1.29-.614 1.458-1.26l.29-1.106c.017-.066.078-.158.211-.224a5.98 5.98 0 00.668-.386c.123-.082.233-.117.3-.117h.013l1.104.304c.646.178 1.314-.023 1.71-.64.267-.465.428-.722.573-.989.358-.658.217-1.381-.164-1.758l-.816-.806c-.046-.046-.106-.144-.098-.284a6.095 6.095 0 000-.772c-.008-.14.052-.238.098-.284l.816-.806c.38-.377.522-1.1.164-1.758a7.994 7.994 0 00-.573-.99c-.396-.616-1.064-.817-1.71-.639l-1.104.304c-.068.019-.146.003-.3-.117a5.994 5.994 0 00-.668-.387c-.133-.066-.194-.158-.212-.224L10.16 1.29C9.99.645 9.444.095 8.701.031A8.094 8.094 0 008 0zm0 11a3 3 0 100-6 3 3 0 000 6z"/></svg></span>
+      </button>
+      <div id="voice-panel">
+        <h3>
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></span>
+          Voice Settings
+        </h3>
+        <label for="voice-provider">Provider</label>
+        <select id="voice-provider" onchange="switchVoiceProvider()">
+          <option value="azure">Azure Speech</option>
+          <option value="elevenlabs">ElevenLabs</option>
+          <option value="browser">Browser (free)</option>
+        </select>
+        <div id="azure-fields">
+          <label for="az-speech-key">Speech API Key</label>
+          <input type="password" id="az-speech-key" placeholder="paste key from Azure portal..." autocomplete="off">
+          <label for="az-speech-region">Region</label>
+          <select id="az-speech-region" onchange="loadAzureVoices()">
+            <option value="eastus">East US</option>
+            <option value="eastus2">East US 2</option>
+            <option value="westus">West US</option>
+            <option value="westus2">West US 2</option>
+            <option value="centralus">Central US</option>
+            <option value="northeurope">North Europe</option>
+            <option value="westeurope">West Europe</option>
+            <option value="swedencentral">Sweden Central</option>
+            <option value="southeastasia">Southeast Asia</option>
+            <option value="australiaeast">Australia East</option>
+            <option value="japaneast">Japan East</option>
+          </select>
+          <label for="az-voice-select">Voice</label>
+          <select id="az-voice-select">
+            <option value="">Enter key &amp; save to load voices</option>
+          </select>
+        </div>
+        <div id="elevenlabs-fields" style="display:none">
+          <label for="el-api-key">ElevenLabs API Key</label>
+          <input type="password" id="el-api-key" placeholder="sk_..." autocomplete="off">
+          <label for="el-voice-select">Voice</label>
+          <select id="el-voice-select">
+            <option value="">Enter API key first</option>
+          </select>
+          <label for="el-model-select">Model</label>
+          <select id="el-model-select">
+            <option value="eleven_multilingual_v2">Multilingual v2</option>
+            <option value="eleven_turbo_v2_5">Turbo v2.5 (low latency)</option>
+            <option value="eleven_monolingual_v1">English v1</option>
+          </select>
+        </div>
+        <div class="panel-row">
+          <button class="panel-btn primary" onclick="saveVoiceSettings()">Save</button>
+          <button class="panel-btn" onclick="testVoice()">Test</button>
+          <button class="panel-btn" onclick="clearVoiceSettings()">Clear Key</button>
+        </div>
+        <div class="panel-status" id="voice-panel-status"></div>
+      </div>
+    </div>
     <a class="icon-btn" href="vscode://file/$HOME/.brainstem/src/rapp_brainstem" id="vscode-link" title="Open in VS Code">
       <span class="icon"><svg viewBox="0 0 16 16"><path d="M14.85 3.22l-3.07-1.56a.75.75 0 00-.82.12L5.8 6.56 3.16 4.58a.5.5 0 00-.64.05l-.86.74a.5.5 0 00-.004.72L3.87 8l-2.22 1.92a.5.5 0 00.003.72l.86.74a.5.5 0 00.64.05L5.8 9.44l5.16 4.78a.75.75 0 00.82.12l3.07-1.56a.75.75 0 00.42-.67V3.89a.75.75 0 00-.42-.67zM11 10.93L7.3 8 11 5.07v5.86z"/></svg></span>
     </a>
@@ -697,7 +800,7 @@
         if (d.voice_response) {
           speakText(d.voice_response);
         } else if (voiceMode) {
-          speakText(d.response.replace(/[#*`_\[\]()>|]/g, '').slice(0, 300));
+          speakText(d.response);
         }
       }
     } catch (err) {
@@ -709,8 +812,262 @@
     input.focus();
   }
 
-  // ── Voice ──
+  // ── Voice (Azure Speech + ElevenLabs + browser fallback) ──
   let voiceMode = false;
+  let voiceProvider = localStorage.getItem('voice_provider') || 'azure';
+
+  // Azure Speech state
+  let azSpeechKey = localStorage.getItem('az_speech_key') || '';
+  let azSpeechRegion = localStorage.getItem('az_speech_region') || 'eastus';
+  let azVoiceName = localStorage.getItem('az_voice_name') || 'en-US-JennyNeural';
+
+  // ElevenLabs state
+  let elApiKey = localStorage.getItem('el_api_key') || '';
+  let elVoiceId = localStorage.getItem('el_voice_id') || '';
+  let elModel = localStorage.getItem('el_model') || 'eleven_multilingual_v2';
+
+  let currentAudio = null;
+
+  // Populate saved settings into panel inputs
+  document.getElementById('voice-provider').value = voiceProvider;
+  document.getElementById('az-speech-key').value = azSpeechKey;
+  document.getElementById('az-speech-region').value = azSpeechRegion;
+  document.getElementById('el-api-key').value = elApiKey;
+  document.getElementById('el-model-select').value = elModel;
+  switchVoiceProvider();
+
+  if (azSpeechKey) loadAzureVoices();
+  if (elApiKey) loadElevenLabsVoices();
+
+  document.getElementById('az-speech-key').addEventListener('change', () => {
+    const key = document.getElementById('az-speech-key').value.trim();
+    if (key) { azSpeechKey = key; loadAzureVoices(); }
+  });
+  document.getElementById('el-api-key').addEventListener('change', () => {
+    const key = document.getElementById('el-api-key').value.trim();
+    if (key) { elApiKey = key; loadElevenLabsVoices(); }
+  });
+
+  function switchVoiceProvider() {
+    const p = document.getElementById('voice-provider').value;
+    document.getElementById('azure-fields').style.display = p === 'azure' ? 'block' : 'none';
+    document.getElementById('elevenlabs-fields').style.display = p === 'elevenlabs' ? 'block' : 'none';
+  }
+
+  function toggleVoicePanel() {
+    document.getElementById('voice-panel').classList.toggle('open');
+  }
+
+  document.addEventListener('click', (e) => {
+    const panel = document.getElementById('voice-panel');
+    if (!e.target.closest('.voice-wrapper') && panel.classList.contains('open')) {
+      panel.classList.remove('open');
+    }
+  });
+
+  // ── Azure Speech TTS ──
+  async function loadAzureVoices() {
+    const key = document.getElementById('az-speech-key').value.trim() || azSpeechKey;
+    const region = document.getElementById('az-speech-region').value || azSpeechRegion;
+    const sel = document.getElementById('az-voice-select');
+    const status = document.getElementById('voice-panel-status');
+    if (!key) {
+      sel.innerHTML = '<option value="">Enter API key first</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Loading voices...</option>';
+    try {
+      const r = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/voices/list`, {
+        headers: { 'Ocp-Apim-Subscription-Key': key }
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const voices = await r.json();
+      const neural = voices.filter(v => v.VoiceType === 'Neural')
+        .sort((a, b) => a.LocaleName.localeCompare(b.LocaleName) || a.DisplayName.localeCompare(b.DisplayName));
+      sel.innerHTML = '';
+      const enVoices = neural.filter(v => v.Locale.startsWith('en-'));
+      const otherVoices = neural.filter(v => !v.Locale.startsWith('en-'));
+      if (enVoices.length) {
+        const g = document.createElement('optgroup');
+        g.label = 'English';
+        enVoices.forEach(v => {
+          const o = document.createElement('option');
+          o.value = v.ShortName;
+          o.textContent = `${v.DisplayName} (${v.LocaleName}, ${v.Gender})`;
+          if (v.ShortName === azVoiceName) o.selected = true;
+          g.appendChild(o);
+        });
+        sel.appendChild(g);
+      }
+      if (otherVoices.length) {
+        const g = document.createElement('optgroup');
+        g.label = 'Other Languages';
+        otherVoices.forEach(v => {
+          const o = document.createElement('option');
+          o.value = v.ShortName;
+          o.textContent = `${v.DisplayName} (${v.LocaleName}, ${v.Gender})`;
+          if (v.ShortName === azVoiceName) o.selected = true;
+          g.appendChild(o);
+        });
+        sel.appendChild(g);
+      }
+      if (!sel.value && enVoices.length) sel.value = enVoices[0].ShortName;
+      status.textContent = `${neural.length} Azure voices loaded`;
+      status.style.color = '#3fb950';
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load</option>';
+      status.textContent = 'Error: ' + e.message;
+      status.style.color = '#f85149';
+    }
+  }
+
+  function escapeXml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/'/g, '&apos;').replace(/"/g, '&quot;');
+  }
+
+  async function speakWithAzure(text) {
+    const locale = azVoiceName.split('-').slice(0, 2).join('-') || 'en-US';
+    const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'><voice name='${azVoiceName}'>${escapeXml(text)}</voice></speak>`;
+    const r = await fetch(`https://${azSpeechRegion}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': azSpeechKey,
+        'Content-Type': 'application/ssml+xml',
+        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3'
+      },
+      body: ssml
+    });
+    if (!r.ok) throw new Error(`Azure Speech ${r.status}`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
+    currentAudio.onended = () => URL.revokeObjectURL(url);
+    currentAudio.play();
+  }
+
+  // ── ElevenLabs TTS ──
+  async function loadElevenLabsVoices() {
+    const sel = document.getElementById('el-voice-select');
+    const status = document.getElementById('voice-panel-status');
+    if (!elApiKey) {
+      sel.innerHTML = '<option value="">Enter API key first</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Loading...</option>';
+    try {
+      const r = await fetch('https://api.elevenlabs.io/v1/voices', {
+        headers: { 'xi-api-key': elApiKey }
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      sel.innerHTML = '';
+      (d.voices || []).forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.voice_id;
+        opt.textContent = v.name + (v.labels?.accent ? ` (${v.labels.accent})` : '');
+        if (v.voice_id === elVoiceId) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (!elVoiceId && d.voices?.length) elVoiceId = d.voices[0].voice_id;
+      status.textContent = `${d.voices.length} ElevenLabs voices loaded`;
+      status.style.color = '#3fb950';
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load</option>';
+      status.textContent = 'Error: ' + e.message;
+      status.style.color = '#f85149';
+    }
+  }
+
+  async function speakWithElevenLabs(text) {
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elVoiceId}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': elApiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg'
+      },
+      body: JSON.stringify({
+        text: text.slice(0, 5000),
+        model_id: elModel,
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+      })
+    });
+    if (!r.ok) throw new Error(`ElevenLabs ${r.status}`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    currentAudio = new Audio(url);
+    currentAudio.onended = () => URL.revokeObjectURL(url);
+    currentAudio.play();
+  }
+
+  // ── Voice settings persistence ──
+  function saveVoiceSettings() {
+    const provider = document.getElementById('voice-provider').value;
+    voiceProvider = provider;
+    localStorage.setItem('voice_provider', provider);
+    const status = document.getElementById('voice-panel-status');
+
+    if (provider === 'azure') {
+      azSpeechKey = document.getElementById('az-speech-key').value.trim();
+      azSpeechRegion = document.getElementById('az-speech-region').value;
+      azVoiceName = document.getElementById('az-voice-select').value;
+      if (azSpeechKey) localStorage.setItem('az_speech_key', azSpeechKey);
+      if (azSpeechRegion) localStorage.setItem('az_speech_region', azSpeechRegion);
+      if (azVoiceName) localStorage.setItem('az_voice_name', azVoiceName);
+      if (azSpeechKey && document.getElementById('az-voice-select').options.length <= 1) loadAzureVoices();
+      status.textContent = azSpeechKey ? 'Saved — Azure Speech active' : 'Saved — enter API key to activate';
+    } else if (provider === 'elevenlabs') {
+      elApiKey = document.getElementById('el-api-key').value.trim();
+      elVoiceId = document.getElementById('el-voice-select').value;
+      elModel = document.getElementById('el-model-select').value;
+      if (elApiKey) localStorage.setItem('el_api_key', elApiKey);
+      if (elVoiceId) localStorage.setItem('el_voice_id', elVoiceId);
+      localStorage.setItem('el_model', elModel);
+      status.textContent = elApiKey ? 'Saved — ElevenLabs active' : 'Saved — enter API key to activate';
+    } else {
+      status.textContent = 'Saved — using browser voice';
+    }
+    status.style.color = '#3fb950';
+    setTimeout(() => { status.textContent = ''; }, 3000);
+  }
+
+  function clearVoiceSettings() {
+    const provider = document.getElementById('voice-provider').value;
+    const status = document.getElementById('voice-panel-status');
+    if (provider === 'azure') {
+      azSpeechKey = '';
+      document.getElementById('az-speech-key').value = '';
+      document.getElementById('az-voice-select').innerHTML = '<option value="">Enter API key first</option>';
+      localStorage.removeItem('az_speech_key');
+      localStorage.removeItem('az_voice_name');
+    } else if (provider === 'elevenlabs') {
+      elApiKey = '';
+      elVoiceId = '';
+      document.getElementById('el-api-key').value = '';
+      document.getElementById('el-voice-select').innerHTML = '<option value="">Enter API key first</option>';
+      localStorage.removeItem('el_api_key');
+      localStorage.removeItem('el_voice_id');
+    }
+    status.textContent = 'Key cleared';
+    status.style.color = '#8b949e';
+  }
+
+  async function testVoice() {
+    saveVoiceSettings();
+    const status = document.getElementById('voice-panel-status');
+    status.textContent = 'Playing test...';
+    status.style.color = '#d29922';
+    try {
+      await speakText('Hello, I am your RAPP Brainstem assistant.', true);
+      const names = { azure: 'Azure Speech', elevenlabs: 'ElevenLabs', browser: 'browser voice' };
+      status.textContent = `Playing via ${names[voiceProvider] || 'browser voice'}`;
+      status.style.color = '#3fb950';
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+      status.style.color = '#f85149';
+    }
+  }
 
   async function toggleVoice() {
     try {
@@ -721,11 +1078,12 @@
       if (voiceMode) {
         appendMsg('system', '');
         const last = document.querySelector('#chat .msg.system:last-child .bubble');
-        last.innerHTML = '<strong>Voice mode enabled.</strong> Responses will be read aloud using your device\'s built-in voice. ' +
-          'Want a better sounding voice? Add an ElevenLabs or OpenAI TTS key in your <code>.env</code> file.';
+        const names = { azure: 'Azure Speech', elevenlabs: 'ElevenLabs', browser: 'browser' };
+        const name = names[voiceProvider] || 'browser';
+        last.innerHTML = `<strong>Voice mode enabled</strong> — using ${name} TTS. Click ⚙ to change voice settings.`;
         speakText('Voice mode enabled.');
       } else {
-        window.speechSynthesis.cancel();
+        stopSpeaking();
         appendMsg('system', 'Voice mode disabled.');
       }
     } catch(e) { console.error('Voice toggle failed:', e); }
@@ -737,10 +1095,32 @@
     btn.title = voiceMode ? 'Voice mode on' : 'Voice mode off';
   }
 
-  function speakText(text) {
-    if (!text || !voiceMode) return;
+  function stopSpeaking() {
     window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  }
+
+  async function speakText(text, force) {
+    if (!text || (!voiceMode && !force)) return;
+    stopSpeaking();
+
+    const clean = text.replace(/[#*`_\[\]()>|]/g, '').trim();
+    if (!clean) return;
+
+    if (voiceProvider === 'azure' && azSpeechKey) {
+      try { await speakWithAzure(clean); return; } catch (e) {
+        console.warn('Azure Speech TTS failed, falling back to browser:', e);
+      }
+    }
+
+    if (voiceProvider === 'elevenlabs' && elApiKey && elVoiceId) {
+      try { await speakWithElevenLabs(clean); return; } catch (e) {
+        console.warn('ElevenLabs TTS failed, falling back to browser:', e);
+      }
+    }
+
+    // Browser fallback
+    const utter = new SpeechSynthesisUtterance(clean.slice(0, 300));
     utter.rate = 1.05; utter.pitch = 1.0;
     window.speechSynthesis.speak(utter);
   }

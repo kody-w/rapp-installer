@@ -2,27 +2,46 @@
 
 ## Architecture
 
-RAPP Brainstem is a progressive AI agent platform taught through a biological metaphor:
+RAPP Brainstem is a progressive AI agent platform using a biological metaphor:
 
-1. **🧠 Brainstem** (`rapp_brainstem/`) — The core. A local-first Flask server (Python 3.11) using GitHub Copilot's API for LLM inference. No API keys needed — just `gh auth login`. This is where all development happens.
-2. **☁️ Spinal Cord** (`azuredeploy.json`, `deploy.sh`) — Azure deployment. ARM template creates Function App, Azure OpenAI, Storage, App Insights. All Entra ID auth.
-3. **🤖 Nervous System** (`MSFTAIBASMultiAgentCopilot_*.zip`) — Power Platform solution for Copilot Studio. Connects the Azure Function to Teams and M365 Copilot.
+1. **Brainstem** (`rapp_brainstem/`) — The core. A local-first Flask server (Python 3.11) using GitHub Copilot's API for LLM inference. No API keys needed — just `gh auth login`. This is where all development happens.
+2. **Spinal Cord** (`azuredeploy.json`, `deploy.sh`) — Azure deployment. ARM template creates Function App, Azure OpenAI, Storage, App Insights. All Entra ID auth.
+3. **Nervous System** (`MSFTAIBASMultiAgentCopilot_*.zip`) — Power Platform solution for Copilot Studio. Connects the Azure Function to Teams and M365 Copilot.
 
 Everything else in the repo root (install scripts, index.html, docs/) is onboarding infrastructure.
 
 ### Brainstem internals
 
-- **`brainstem.py`** — The server. Auth, agent orchestration, tool-calling loop, all HTTP endpoints.
-- **Soul file** (`soul.md`): System prompt. Users set `SOUL_PATH` in `.env` to their own.
-- **Agent auto-discovery**: `*_agent.py` files in `AGENTS_PATH` extend `BasicAgent`, implement `perform()`, get registered as OpenAI function-calling tools via `to_tool()`.
-- **Import shims**: `_register_shims()` injects `sys.modules` so remote agents importing `utils.azure_file_storage` or `utils.dynamics_storage` transparently get `local_storage.py`.
-- **Remote agent repos**: Hot-loaded from GitHub repos via `.repos.json`. Missing pip deps auto-installed.
-- **Auth chain**: env var → `.copilot_token` file → `gh auth token` CLI → device code OAuth at `/login`.
+`brainstem.py` is the single-file server containing auth, agent orchestration, the tool-calling loop, and all HTTP endpoints.
+
+**Tool-calling loop** (`/chat`): Builds messages from soul + memory + conversation history, then runs up to **3 rounds** of LLM calls. Each round checks for `tool_calls` in the response, executes matching agents via `run_tool_calls()`, appends tool results, and loops. Falls back to `gpt-4o` if the configured model fails.
+
+**Agent auto-discovery**: `load_agents()` globs `*_agent.py` in `AGENTS_PATH`, dynamically imports each file, finds classes with a `perform` method (excluding `BasicAgent` itself), and instantiates them. Each agent's `to_tool()` generates its OpenAI function-calling schema.
+
+**Import shims**: `_register_shims()` injects fake `sys.modules` so agents written for the cloud (CommunityRAPP) work locally:
+- `utils.azure_file_storage` → `local_storage.AzureFileStorageManager`
+- `utils.dynamics_storage` → same local shim (aliased as `DynamicsStorageManager`)
+- `utils.storage_factory` → returns a `LocalStorageManager` instance
+- `agents.basic_agent` → the local `basic_agent.py`
+
+**Auto-pip-install**: When loading an agent hits `ModuleNotFoundError`, `_extract_package_name()` maps import names to pip packages via `_PIP_MAP` (e.g., `bs4` → `beautifulsoup4`, `PIL` → `Pillow`), auto-installs, and retries once.
+
+**Memory agents**: `ManageMemory` and `ContextMemory` get special treatment — the LLM-invented `user_guid` arg is stripped before calling `perform()`. The `/chat` handler auto-injects `<memory>` context from `ContextMemory` into the system prompt if that agent is loaded.
+
+**Auth chain** (in priority order):
+1. `GITHUB_TOKEN` env var
+2. `.copilot_token` file (JSON with `access_token` + `refresh_token`)
+3. `gh auth token` CLI (skips `gho_` tokens — they lack Copilot access)
+4. Device code OAuth flow via `/login` endpoint
+
+Copilot API tokens are exchanged from the GitHub token, cached in memory (with 60s expiry buffer) and on disk.
+
+**Model compatibility**: `_NO_TOOL_CHOICE_MODELS` tracks models that don't support the `tool_choice` parameter (Claude, o1). The server auto-detects these from the Copilot models API.
 
 ## Running & Testing
 
 ```bash
-# Start the brainstem server
+# Start the brainstem server (creates venv at ~/.brainstem/venv if needed)
 cd rapp_brainstem && ./start.sh    # port 7071
 
 # Run tests
@@ -35,9 +54,25 @@ python3 -m pytest test_local_agents.py::TestLocalStorage::test_write_and_read -v
 curl -s localhost:7071/health | python3 -m json.tool
 ```
 
+## API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/chat` | POST | `{"user_input": "...", "conversation_history": [], "session_id": "..."}` |
+| `/health` | GET | Status, model, loaded agents, token state |
+| `/login` | POST | Start GitHub device code OAuth flow |
+| `/login/poll` | POST | Poll for completed device code auth |
+| `/login/status` | GET | Check current auth state |
+| `/models` | GET | List available models |
+| `/models/set` | POST | Change the active model |
+| `/voice` | GET | Voice mode status |
+| `/voice/toggle` | POST | Toggle voice mode |
+| `/version` | GET | Server version |
+| `/debug/auth` | GET | Auth diagnostics |
+
 ## Writing Agents
 
-Agents extend `BasicAgent` with `name`, `metadata` (OpenAI function schema), and `perform()`:
+Agents extend `BasicAgent` (`agents/basic_agent.py`) with `name`, `metadata` (OpenAI function schema), and `perform()`:
 
 ```python
 from basic_agent import BasicAgent
@@ -60,15 +95,17 @@ class MyAgent(BasicAgent):
         return f"Result: {param1}"
 ```
 
-- File named `*_agent.py` in agents directory
-- `perform()` must accept `**kwargs`
+- File must be named `*_agent.py` in the agents directory
+- `perform()` must accept `**kwargs` — the LLM may pass unexpected args
+- `to_tool()` on `BasicAgent` converts `metadata` to OpenAI function-calling format
 - Agents importing `AzureFileStorageManager` get the local shim automatically
+- For storage, use `from utils.azure_file_storage import AzureFileStorageManager` — the shim handles local vs cloud
 
 ## Key Conventions
 
-- **Python 3.11** target runtime
-- **No API keys** for local dev — GitHub Copilot token exchange
-- **Config via `.env`** (see `.env.example`)
-- **Local-first storage**: `local_storage.py` stores to `.brainstem_data/` on disk
-- **`POST /chat`** expects `{"user_input": "...", "conversation_history": [], "session_id": "..."}`
-- **Skill-based onboarding**: `skill.md` follows the Moltbook pattern — frontmatter metadata, autonomous execution steps, ⏸️ pause points for user input, state saved to `~/.config/brainstem/state.json`
+- **Python 3.11** target runtime; venv at `~/.brainstem/venv`
+- **No API keys** for local dev — GitHub Copilot token exchange handles auth
+- **Config via `.env`** — see `.env.example` for `GITHUB_TOKEN`, `GITHUB_MODEL`, `SOUL_PATH`, `AGENTS_PATH`, `PORT`, `VOICE_MODE`
+- **Local-first storage**: `local_storage.py` stores to `.brainstem_data/` on disk, mirroring the CommunityRAPP Azure File Storage layout (`shared_memories/memory.json` for shared, `memory/{guid}/user_memory.json` for per-user)
+- **Soul file** (`soul.md`): System prompt loaded as the first message in every conversation. Users customize by editing it or pointing `SOUL_PATH` to their own
+- **Skill-based onboarding**: `skill.md` uses the Moltbook pattern — YAML frontmatter, autonomous execution steps, ⏸️ pause points for user input, state saved to `~/.config/brainstem/state.json`
