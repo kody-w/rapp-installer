@@ -105,4 +105,50 @@ Everyone enters through the same door (Lesson 1). The paths diverge based on pac
 
 ---
 
+## Video Course Plan (Udemy / YouTube)
+
+The academy content doubles as the script for a filmed course. Each
+lesson maps to a video module. The format: **show, don't lecture.**
+Every module is the instructor hatching, raising, and teaching a
+rappter in real time — the viewer follows along on their own machine.
+
+### Course: "Raise Your Own AI — Build a Living Agent from Scratch"
+
+| Module | Title | Runtime | What the Viewer Does |
+|--------|-------|---------|---------------------|
+| 0 | **Welcome: What You're About to Build** | 3 min | Watch the rappter hatch (teaser) |
+| | **— SECTION 1: HATCHLING —** | | |
+| 1 | What's Alive In There? | 8 min | Learn the anatomy, see the heartbeat |
+| 2 | Hatching Your Rappter | 10 min | Run the one-liner, first boot, explore the UI |
+| 3 | Your First Conversation | 8 min | Talk to it, see how it thinks, understand /chat |
+| 4 | Giving It a Soul | 12 min | Edit soul.md, restart, see the personality change |
+| 5 | Teaching It a Trick | 15 min | Write a basic agent from scratch, watch it auto-register |
+| | **— SECTION 2: APPRENTICE —** | | |
+| 6 | How Memory Works | 10 min | Store a memory, find it later, explore .brainstem_data/ |
+| 7 | The Heartbeat Deep Dive | 12 min | Read daemon.py, watch the journal grow, check /vitals |
+| 8 | Reading the Journal | 8 min | Explore the rappter's inner monologue |
+| 9 | Building an API Agent | 18 min | Write an agent that calls a real API (weather, news, etc.) |
+| 10 | Debugging Like a Doctor | 12 min | Break something on purpose, diagnose it, fix it |
+| | **— SECTION 3: BUILDER —** | | |
+| 11 | The Spinal Cord: Going to Azure | 20 min | Deploy to Azure with the ARM template |
+| 12 | The Nervous System: Copilot Studio | 18 min | Import the Power Platform solution, connect to Teams |
+| 13 | Building for the Community | 15 min | Package an agent repo, publish via .repos.json |
+| 14 | The Constitution & Philosophy | 10 min | Read it together, discuss why the design is the way it is |
+| 15 | What's Next: Your Rappter's Future | 8 min | Open-ended — where to go from here |
+
+**Total estimated runtime:** ~3 hours
+
+### Production Notes
+
+- **Format:** Screen recording + picture-in-picture face cam
+- **Tone:** Conversational, not lecture. Like pair programming with a friend.
+- **Rule:** Every module must show a working result. No "in the next video…"
+- **Materials:** Each module links back to the matching academy lesson for reference
+- **Prerequisite:** A computer with a GitHub account. That's it.
+
+The web lessons are the companion material. The videos are the walkthrough.
+Together they cover visual, reading, and hands-on learners.
+
+---
+
 *This roadmap is a living document. Amend it like the Constitution: make sure a child can still follow the story.*

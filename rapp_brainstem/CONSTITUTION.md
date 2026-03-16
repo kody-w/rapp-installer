@@ -19,7 +19,7 @@ it doesn't belong here yet.
 | **The Brainstem** | Flask server + LLM loop | The core that keeps everything alive |
 | **The Soul** | System prompt (`soul.md`) | Personality — what makes *your* rappter yours |
 | **The Heartbeat** | Daemon process (`daemon.py`) | Proof it's alive between conversations |
-| **Agents / Skills** | Python tools (`*_agent.py`) | Things it learns to do |
+| **Agents / Skills** | Python tools (`*_agent.py`) | Neural pathways — new skills it learns by living with you |
 | **Memory** | Local JSON storage | It remembers you |
 | **The Spinal Cord** | Azure deployment | Growing beyond the local machine |
 | **The Nervous System** | Copilot Studio / M365 | Reaching into the world |
