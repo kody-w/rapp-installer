@@ -86,6 +86,79 @@ That's it. Drop this file in `agents/`, restart, and the rappter
 now knows how to check the weather. It didn't "install" anything.
 It **learned** something.
 
+### One File. That's the Whole Skill.
+
+This is what makes rappter agents fundamentally different from every
+other agentic platform out there.
+
+On LangChain, you need a chain, a config, a vector store, an env
+file, a requirements.txt, and a prayer. On CrewAI, it's YAML files,
+role definitions, task graphs. On AutoGen, it's multi-file agent
+configurations with message routing.
+
+On RAPP? **It's one `.py` file.** That's the whole skill. Everything
+the rappter needs to understand and use it is inside that single file:
+
+- The name (what to call it)
+- The description (when to use it — the LLM reads this)
+- The parameters (what inputs it needs)
+- The `perform()` method (what it actually does)
+
+One file. Self-contained. Portable.
+
+### Portable Like a Pokémon Card
+
+Think about what this means. A rappter skill is a **single file** you
+can:
+
+- **Trade** — Send it to a friend. They drop it in their `agents/`
+  folder. Their rappter just learned your skill.
+- **Collect** — Build a library of skills. Browse what others have
+  built. Pick the ones you want.
+- **Share** — Post it on GitHub, paste it in a Discord, email it.
+  No package manager. No dependency hell. One file.
+- **Remix** — Open it, read it (it's ~30 lines of Python), change
+  the `perform()` method. Now it's yours.
+
+This is the Pokémon card model for AI skills. Every card is self-
+contained. You can hold it in your hand, understand what it does
+by reading it, and give it to anyone. Their rappter picks it up
+and immediately knows how to use it.
+
+Compare this to other platforms:
+
+| Platform | What a "skill" looks like | Portable? |
+|----------|--------------------------|-----------|
+| LangChain | Chain + config + deps + vector store | ❌ Multi-file, env-dependent |
+| CrewAI | YAML + role + task definitions | ❌ Framework-coupled |
+| AutoGen | Agent config + message routing | ❌ Requires orchestration |
+| OpenAI GPTs | JSON + hosted actions + OAuth | ❌ Locked to OpenAI platform |
+| **RAPP** | **One `.py` file** | **✅ Copy, paste, done** |
+
+The reason this works is the `BasicAgent` contract. It's intentionally
+tiny — `name`, `metadata`, `perform()`. That's the surface area. The
+brainstem's auto-discovery does the rest. No registration, no config
+file, no import graph. If it's in the folder and extends `BasicAgent`,
+it exists.
+
+### Why This Matters
+
+Portability is the precondition for an ecosystem. Pokémon worked
+because kids could trade cards at recess. App Stores worked because
+apps were self-contained downloads. Skills work because they're
+single files.
+
+When you can text someone a skill and they can teach it to their
+rappter in 5 seconds, you get:
+
+1. **Virality** — Skills spread person to person, not platform to user
+2. **Creativity** — The barrier to building is ~30 lines of Python
+3. **Community** — People share what they built because sharing is trivial
+4. **Diversity** — Every rappter ends up with a different skill set
+
+That's not a plugin marketplace with a review process and a 6-week
+approval queue. That's kids trading Pokémon cards at recess.
+
 ### The Growth Trajectory
 
 A fresh rappter has a few basic skills — memory, maybe Hacker News.
