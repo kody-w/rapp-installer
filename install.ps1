@@ -108,26 +108,88 @@ function Check-Prerequisites {
 
     # Python 3.11+
     $pythonOk = $false
-    try {
-        $pythonVersion = python --version 2>&1
-        if ($pythonVersion -match "Python 3\.(\d+)") {
-            $minor = [int]$Matches[1]
-            if ($minor -ge 11) {
-                Write-Host "  [OK] $pythonVersion" -ForegroundColor Green
-                $pythonOk = $true
+    $pythonCmd = $null
+
+    # Try multiple python command names (python3 first on some systems, then python)
+    foreach ($cmd in @("python3", "python")) {
+        try {
+            $out = & $cmd --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.(\d+)") {
+                $minor = [int]$Matches[1]
+                if ($minor -ge 11) {
+                    Write-Host "  [OK] $out" -ForegroundColor Green
+                    $pythonOk = $true
+                    $pythonCmd = $cmd
+                    break
+                }
+            }
+        } catch {}
+    }
+
+    if (-not $pythonOk) {
+        # Disable Windows App Execution Aliases that shadow real python
+        # These stubs print "Python was not found" and prevent detection
+        $aliasDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+        foreach ($stub in @("python.exe", "python3.exe")) {
+            $stubPath = Join-Path $aliasDir $stub
+            if (Test-Path $stubPath) {
+                try {
+                    $target = (Get-Item $stubPath).Target
+                    if (-not $target) {
+                        # It's an App Execution Alias stub — rename it out of the way
+                        Rename-Item $stubPath "$stub.disabled" -ErrorAction SilentlyContinue
+                        Write-Host "  [..] Disabled Windows Store python stub" -ForegroundColor Yellow
+                    }
+                } catch {}
             }
         }
-    } catch {}
-    if (-not $pythonOk) {
+
         Install-WithWinget "Python.Python.3.11" "Python 3.11"
-        try {
-            $pythonVersion = python --version 2>&1
-            Write-Host "  [OK] $pythonVersion installed" -ForegroundColor Green
-        } catch {
+
+        # winget installs to a known path — add it explicitly
+        $pyBase = "$env:LOCALAPPDATA\Programs\Python\Python311"
+        if (Test-Path $pyBase) {
+            $env:Path = "$pyBase;$pyBase\Scripts;$env:Path"
+        }
+        # Also refresh from registry
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+        # Verify the REAL python is now reachable
+        $pythonOk = $false
+        foreach ($cmd in @("python3", "python")) {
+            try {
+                $out = & $cmd --version 2>&1
+                if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.(\d+)") {
+                    Write-Host "  [OK] $out installed" -ForegroundColor Green
+                    $pythonOk = $true
+                    $pythonCmd = $cmd
+                    break
+                }
+            } catch {}
+        }
+
+        # Last resort: try the known install path directly
+        if (-not $pythonOk) {
+            $directPy = "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe"
+            if (Test-Path $directPy) {
+                $out = & $directPy --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  [OK] $out installed (direct path)" -ForegroundColor Green
+                    $pythonOk = $true
+                    $pythonCmd = $directPy
+                }
+            }
+        }
+
+        if (-not $pythonOk) {
             Write-Host "  [X] Python install failed — install from https://python.org" -ForegroundColor Red
+            Write-Host "      Make sure to check 'Add Python to PATH' during install" -ForegroundColor Yellow
             exit 1
         }
     }
+
+    # Store the working python command for later use
+    $script:PythonExe = $pythonCmd
 
     # GitHub CLI (optional but recommended)
     try {
@@ -173,17 +235,17 @@ function Install-Brainstem {
 }
 
 function Run-PipInstall {
-    # Use Start-Process to completely bypass PowerShell's error handling for native commands
     $reqFile = "$BRAINSTEM_HOME\src\rapp_brainstem\requirements.txt"
-    $proc = Start-Process -FilePath "python" -ArgumentList "-m", "pip", "install", "-r", $reqFile -NoNewWindow -Wait -PassThru
+    $py = if ($script:PythonExe) { $script:PythonExe } else { "python" }
+    $proc = Start-Process -FilePath $py -ArgumentList "-m", "pip", "install", "-r", $reqFile -NoNewWindow -Wait -PassThru
     if ($proc.ExitCode -ne 0) {
-        # Retry with --user
-        Start-Process -FilePath "python" -ArgumentList "-m", "pip", "install", "-r", $reqFile, "--user" -NoNewWindow -Wait -PassThru | Out-Null
+        $proc = Start-Process -FilePath $py -ArgumentList "-m", "pip", "install", "-r", $reqFile, "--user" -NoNewWindow -Wait -PassThru | Out-Null
     }
 }
 
 function Check-PythonDeps {
-    $proc = Start-Process -FilePath "python" -ArgumentList "-c", "import flask, flask_cors, requests, dotenv" -NoNewWindow -Wait -PassThru
+    $py = if ($script:PythonExe) { $script:PythonExe } else { "python" }
+    $proc = Start-Process -FilePath $py -ArgumentList "-c", "import flask, flask_cors, requests, dotenv" -NoNewWindow -Wait -PassThru
     return $proc.ExitCode -eq 0
 }
 
@@ -208,17 +270,18 @@ function Install-CLI {
     }
 
     # Batch wrapper (works in cmd.exe and PowerShell)
+    $py = if ($script:PythonExe) { $script:PythonExe } else { "python" }
     $cmdContent = @"
 @echo off
 cd /d "$BRAINSTEM_HOME\src\rapp_brainstem"
-python brainstem.py %*
+$py brainstem.py %*
 "@
     Set-Content -Path "$BRAINSTEM_BIN\brainstem.cmd" -Value $cmdContent
 
     # PowerShell wrapper
     $psContent = @"
 Set-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
-python brainstem.py @args
+& "$py" brainstem.py @args
 "@
     Set-Content -Path "$BRAINSTEM_BIN\brainstem.ps1" -Value $psContent
 
@@ -382,7 +445,8 @@ function Launch-Brainstem {
     # Open browser after a delay
     Start-Job -ScriptBlock { Start-Sleep -Seconds 3; Start-Process "http://localhost:7071" } | Out-Null
 
-    python brainstem.py
+    $py = if ($script:PythonExe) { $script:PythonExe } else { "python" }
+    & $py brainstem.py
 }
 
 function Main {
