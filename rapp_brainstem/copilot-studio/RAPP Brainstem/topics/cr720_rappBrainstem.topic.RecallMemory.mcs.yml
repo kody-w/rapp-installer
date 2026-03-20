@@ -1,0 +1,28 @@
+mcs.metadata:
+  componentName: Recall Memory
+  description: Recalls stored memories from previous conversations. Use this when the user asks what you remember or know about them.
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    displayName: Recall Memory
+    includeInOnSelectIntent: false
+    triggerQueries:
+      - What do you remember about me
+      - Do you remember what I told you
+      - Recall my memories
+      - What have I told you before
+      - Search my memories
+      - What do you know about me
+      - What did I say last time
+
+  actions:
+    - kind: SendActivity
+      id: sendMessage_recall_result
+      activity:
+        text:
+          - "Memory recall is not yet connected to Dataverse. Once the Power Automate flow is configured, I'll be able to retrieve your stored memories here. For now, I can still help you with other things!"
+
+    - kind: CancelAllDialogs
+      id: cancelAllDialogs_rm01

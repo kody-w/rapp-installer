@@ -1,0 +1,27 @@
+mcs.metadata:
+  componentName: Hacker News
+  description: Fetches top stories from Hacker News. Returns title, URL, score, and author for the top 10 stories.
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    displayName: Hacker News
+    includeInOnSelectIntent: false
+    triggerQueries:
+      - Show me Hacker News
+      - What's on Hacker News
+      - Top stories on HN
+      - Hacker News top stories
+      - Latest tech news from HN
+      - What's trending on Hacker News
+
+  actions:
+    - kind: SendActivity
+      id: sendMessage_hn_response
+      activity:
+        text:
+          - "The Hacker News feed is not yet connected. Once the Power Automate flow is configured with the HN Firebase API, I'll fetch the top 10 stories with title, URL, score, and author right here. In the meantime, you can check https://news.ycombinator.com directly!"
+
+    - kind: CancelAllDialogs
+      id: cancelAllDialogs_hn01

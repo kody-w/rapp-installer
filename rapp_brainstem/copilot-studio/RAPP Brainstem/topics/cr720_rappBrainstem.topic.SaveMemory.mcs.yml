@@ -1,0 +1,32 @@
+mcs.metadata:
+  componentName: Save Memory
+  description: Saves information to persistent memory for future conversations. Called when the user asks you to remember something or shares personal facts.
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    displayName: Save Memory
+    includeInOnSelectIntent: false
+    triggerQueries:
+      - Remember that my
+      - Please remember this
+      - Save this to memory
+      - Don't forget that
+      - Remember my name is
+      - Remember I like
+      - Remember my favorite
+      - Store this for later
+      - Keep this in mind for next time
+      - Make a note that
+      - I want you to remember
+
+  actions:
+    - kind: SendActivity
+      id: sendMessage_save_confirm
+      activity:
+        text:
+          - "I've noted what you shared. Memory persistence to Dataverse is not yet connected — once the Power Automate flow is configured, I'll save this permanently and recall it in future conversations."
+
+    - kind: CancelAllDialogs
+      id: cancelAllDialogs_sm01
