@@ -1,0 +1,11 @@
+mcs.metadata:
+  componentName: Context Memory
+  description: Recalls and provides context based on stored memories of past interactions with the user.
+kind: TaskDialog
+modelDisplayName: Context Memory
+modelDescription: Recalls and provides context based on stored memories of past interactions with the user.
+action:
+  kind: InvokeConnectedAgentTaskAction
+  botSchemaName: rapp_contextmemory
+  historyType:
+    kind: ConversationHistory

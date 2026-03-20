@@ -1,0 +1,11 @@
+mcs.metadata:
+  componentName: Manage Memory
+  description: Manages memories in the conversation system. Saves important information like facts, preferences, insights, and tasks to long-term memory for future reference.
+kind: TaskDialog
+modelDisplayName: Manage Memory
+modelDescription: Manages memories in the conversation system. Saves important information like facts, preferences, insights, and tasks to long-term memory for future reference.
+action:
+  kind: InvokeConnectedAgentTaskAction
+  botSchemaName: rapp_managememory
+  historyType:
+    kind: ConversationHistory

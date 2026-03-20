@@ -1,0 +1,11 @@
+mcs.metadata:
+  componentName: HackerNews
+  description: Fetches top stories from Hacker News using the HN Firebase API. Returns title, url, score, and author for each story.
+kind: TaskDialog
+modelDisplayName: HackerNews
+modelDescription: Fetches top stories from Hacker News using the HN Firebase API. Returns title, url, score, and author for each story.
+action:
+  kind: InvokeConnectedAgentTaskAction
+  botSchemaName: rapp_hackernews
+  historyType:
+    kind: ConversationHistory

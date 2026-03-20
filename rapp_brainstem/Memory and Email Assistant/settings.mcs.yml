@@ -1,0 +1,33 @@
+﻿displayName: Memory and Email Assistant
+schemaName: copilots_header_rapp_memoryemail
+accessControlPolicy: GroupMembership
+authenticationMode: Integrated
+authenticationTrigger: Always
+configuration:
+  channels:
+    - channelId: MsTeams
+
+    - channelId: Microsoft365Copilot
+
+  settings:
+    GenerativeActionsEnabled: true
+
+  isAgentConnectable: false
+  publishOnImport: true
+  gPTSettings:
+    defaultSchemaName: copilots_header_rapp_memoryemail.gpt.default
+
+  isLightweightBot: false
+  aISettings:
+    useModelKnowledge: true
+    isFileAnalysisEnabled: false
+    isSemanticSearchEnabled: true
+    contentModeration: High
+    optInUseLatestModels: false
+
+  recognizer:
+    kind: GenerativeAIRecognizer
+
+publishedOn: 2026-03-11T02:24:14.0000000Z
+template: default-2.1.0
+language: 1033
