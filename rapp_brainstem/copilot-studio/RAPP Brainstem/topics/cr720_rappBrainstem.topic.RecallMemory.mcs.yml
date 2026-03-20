@@ -16,13 +16,11 @@ beginDialog:
       - Search my memories
       - What do you know about me
       - What did I say last time
-
   actions:
     - kind: SendActivity
       id: sendMessage_recall_result
       activity:
         text:
-          - "Memory recall is not yet connected to Dataverse. Once the Power Automate flow is configured, I'll be able to retrieve your stored memories here. For now, I can still help you with other things!"
-
+          - "Memory recall is not yet connected to Dataverse. Once the Power Automate flow is configured, I will be able to retrieve your stored memories here. For now, I can still help you with other things!"
     - kind: CancelAllDialogs
       id: cancelAllDialogs_rm01

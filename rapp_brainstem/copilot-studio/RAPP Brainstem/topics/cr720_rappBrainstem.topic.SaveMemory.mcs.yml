@@ -12,7 +12,7 @@ beginDialog:
       - Remember that my
       - Please remember this
       - Save this to memory
-      - Don't forget that
+      - Do not forget that
       - Remember my name is
       - Remember I like
       - Remember my favorite
@@ -20,13 +20,11 @@ beginDialog:
       - Keep this in mind for next time
       - Make a note that
       - I want you to remember
-
   actions:
     - kind: SendActivity
       id: sendMessage_save_confirm
       activity:
         text:
-          - "I've noted what you shared. Memory persistence to Dataverse is not yet connected — once the Power Automate flow is configured, I'll save this permanently and recall it in future conversations."
-
+          - "I have noted what you shared. Memory persistence to Dataverse is not yet connected. Once the Power Automate flow is configured, I will save this permanently and recall it in future conversations."
     - kind: CancelAllDialogs
       id: cancelAllDialogs_sm01

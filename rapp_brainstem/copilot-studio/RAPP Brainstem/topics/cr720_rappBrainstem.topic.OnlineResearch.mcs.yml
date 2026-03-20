@@ -1,6 +1,6 @@
 mcs.metadata:
   componentName: Online Research
-  description: Performs live online research. This topic exists as a routing hint — the actual capability is provided by the agent's native webBrowsing setting.
+  description: Performs live online research. This topic exists as a routing hint. The actual capability is provided by the agent native webBrowsing setting.
 kind: AdaptiveDialog
 beginDialog:
   kind: OnRecognizedIntent
@@ -13,15 +13,13 @@ beginDialog:
       - Search the web for
       - Look up online
       - Find information about
-      - What's the latest on
+      - What is the latest on
       - Current news about
-
   actions:
     - kind: SearchAndSummarizeContent
       id: search_web_research
       variable: Topic.Answer
       userInput: =System.Activity.Text
-
     - kind: ConditionGroup
       id: conditionGroup_hasAnswer
       conditions:
@@ -33,13 +31,11 @@ beginDialog:
               activity:
                 text:
                   - "{Topic.Answer}"
-
       elseActions:
         - kind: SendActivity
           id: sendMessage_research_fallback
           activity:
             text:
-              - "I wasn't able to find specific information on that topic. Could you rephrase your question?"
-
+              - "I was not able to find specific information on that topic. Could you rephrase your question?"
     - kind: CancelAllDialogs
       id: cancelAllDialogs_or01

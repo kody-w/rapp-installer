@@ -89,7 +89,7 @@ async function sendAndCapture(page, utterance, testName) {
   await input.waitFor({ state: "visible", timeout: 15000 });
 
   // Count existing bot messages BEFORE sending
-  const botMsgSelector = '.part-grouping-decorator--from-bot';
+  const botMsgSelector = '[class*="from-bot"]';
   const beforeCount = await page.locator(botMsgSelector).count();
   console.error(`  Messages before send: ${beforeCount}`);
 
@@ -225,7 +225,10 @@ async function sendAndCapture(page, utterance, testName) {
     }
   }
 
-  // Run all test cases
+  // Close this browser — we'll open a fresh one per test
+  await browser.close();
+
+  // Run each test in a FRESH browser session (fresh conversation each time)
   const results = [];
   let passed = 0;
   let failed = 0;
@@ -234,7 +237,38 @@ async function sendAndCapture(page, utterance, testName) {
     console.error(`\n--- Testing: ${tc.name} ---`);
     console.error(`  Sending: "${tc.utterance}"`);
 
+    // Fresh browser + fresh conversation
+    const testBrowser = await chromium.launch({ headless: !headed && hasAuth });
+    const testContext = hasAuth
+      ? await testBrowser.newContext({ storageState: authPath })
+      : await testBrowser.newContext();
+    const page = await testContext.newPage();
+    page.setDefaultTimeout(60000);
+
     try {
+      await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(3000);
+      if (!page.url().includes("copilotstudio.microsoft.com")) {
+        console.error("  Auth required — skipping");
+        await testBrowser.close();
+        failed++;
+        results.push({ name: tc.name, status: "SKIP", utterance: tc.utterance, response: "", failReason: "Auth required" });
+        continue;
+      }
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(3000);
+      await dismissDialogs(page);
+
+      // Ensure test panel is open
+      const inp = page.locator('textarea[placeholder*="Ask a question"]')
+        .or(page.locator("textarea.text-area-input")).first();
+      const pOpen = (await inp.count()) > 0 && (await inp.isVisible().catch(() => false));
+      if (!pOpen) {
+        const tb = page.locator('button[data-telemetry-id="test-chat-button"]')
+          .or(page.locator('button:has-text("Test")')).first();
+        if ((await tb.count()) > 0) { await tb.click({ force: true }); await page.waitForTimeout(5000); }
+      }
+
       const response = await sendAndCapture(page, tc.utterance, tc.name);
       const responseLower = response.toLowerCase();
 
@@ -284,9 +318,9 @@ async function sendAndCapture(page, utterance, testName) {
       });
       console.error(`  ERROR: ${err.message}`);
     }
-  }
 
-  await browser.close();
+    await testBrowser.close();
+  }
 
   // Output summary
   const summary = {
