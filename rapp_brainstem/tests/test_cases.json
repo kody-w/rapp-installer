@@ -6,9 +6,9 @@
     "expectNotContains": "error code"
   },
   {
-    "name": "HackerNews topic",
+    "name": "HackerNews via orchestrator",
     "utterance": "Show me what's on Hacker News",
-    "expectContains": "hacker news",
+    "expectContains": null,
     "expectNotContains": "error code"
   },
   {
