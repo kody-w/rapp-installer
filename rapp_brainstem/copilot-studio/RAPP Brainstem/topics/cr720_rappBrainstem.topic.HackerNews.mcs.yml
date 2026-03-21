@@ -1,0 +1,51 @@
+mcs.metadata:
+  componentName: Hacker News
+  description: Fetches and displays the current top 10 stories from Hacker News using the Firebase API via a Power Automate cloud flow.
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    displayName: Hacker News
+    includeInOnSelectIntent: false
+    triggerQueries:
+      - Show me Hacker News
+      - What is trending on Hacker News
+      - Top stories on HN
+      - Get Hacker News front page
+      - Show me the top posts on Hacker News
+      - What is on Hacker News right now
+      - Latest Hacker News stories
+      - HN top 10
+  actions:
+    - kind: SendActivity
+      id: sendMessage_hn_fetching
+      activity:
+        text:
+          - "Fetching the top 10 stories from Hacker News..."
+    - kind: InvokeFlowAction
+      id: invokeFlow_getHNStories
+      flowId: cr720_rappBrainstem.workflow.GetHackerNewsTopStories
+      output:
+        kind: ActionOutputBinding
+        binding:
+          formattedStories: Topic.HNStories
+    - kind: ConditionGroup
+      id: conditionGroup_hasStories
+      conditions:
+        - id: conditionItem_hasStories
+          condition: =!IsBlank(Topic.HNStories)
+          actions:
+            - kind: SendActivity
+              id: sendMessage_hn_result
+              activity:
+                text:
+                  - "{Topic.HNStories}"
+      elseActions:
+        - kind: SendActivity
+          id: sendMessage_hn_fallback
+          activity:
+            text:
+              - "Sorry, I was unable to fetch the Hacker News top stories right now. The Power Automate flow may not be configured yet or the Hacker News API may be temporarily unavailable. Please try again later."
+    - kind: CancelAllDialogs
+      id: cancelAllDialogs_hn01
