@@ -7,6 +7,8 @@ rapp_brainstem/voice.zip
 rapp_brainstem/voice.json
 rapp_brainstem/.pytest_cache/
 rapp_brainstem/__pycache__/
+rapp_brainstem/tests/.auth/
+rapp_brainstem/tests/test-results/
 rapp_brainstem/agents/__pycache__/
 __pycache__/
 *.pyc
