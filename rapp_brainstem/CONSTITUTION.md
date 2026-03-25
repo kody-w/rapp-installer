@@ -90,6 +90,17 @@ irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | i
 One command. Works on a fresh machine. Installs prerequisites, clones
 the repo, sets up the venv, authenticates, and launches.
 
+The same principle applies to every tier:
+
+- **Brainstem:** `curl ... install.sh | bash` — installs and starts
+- **Hippocampus:** `curl ... community_rapp/install.sh | bash` — installs and starts
+
+The one-liner IS the onboarding. Everything after it — starting,
+authenticating, deploying to Azure — either happens automatically
+or is guided by the running system. Manual steps exist only as
+advanced documentation, never as the primary path.
+
+When training users, the instruction is: "run the one-liner." That's it.
 Any change to the repo must be tested against this path. If the
 one-liner breaks, nothing else matters.
 
