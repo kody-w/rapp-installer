@@ -1,4 +1,4 @@
-# Token files (contain secrets)
+# Secrets
 .copilot_token
 .copilot_session
 .env
@@ -7,7 +7,25 @@
 __pycache__/
 *.pyc
 
-# Remote agents (downloaded at runtime)
+# Node
+node_modules/
+
+# Runtime data
 .remote_agents/
 .repos.json
 voice.zip
+.brainstem_data/
+
+# Claude Code
+.claude/
+
+# Copilot Studio (generated/pulled — recreated by deploy.sh or CopilotStudio agent)
+copilot-studio/
+
+# Test artifacts
+tests/.auth/
+tests/test-results/
+playwright-report/
+
+# Build artifacts
+publish.js

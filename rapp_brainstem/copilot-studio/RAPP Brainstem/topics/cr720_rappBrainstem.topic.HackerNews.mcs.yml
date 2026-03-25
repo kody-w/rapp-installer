@@ -1,7 +1,8 @@
 mcs.metadata:
   componentName: Hacker News
-  description: Fetches and displays the current top 10 stories from Hacker News using the Firebase API via a Power Automate cloud flow.
+  description: Fetches and displays top stories from Hacker News using the agent's web browsing capability.
 kind: AdaptiveDialog
+modelDescription: Use this when the user asks about Hacker News, top tech stories, HN, or trending tech news. Browse https://news.ycombinator.com and list the top 10 stories with title, URL, score, and author.
 beginDialog:
   kind: OnRecognizedIntent
   id: main
@@ -18,18 +19,12 @@ beginDialog:
       - Latest Hacker News stories
       - HN top 10
   actions:
-    - kind: SendActivity
-      id: sendMessage_hn_fetching
-      activity:
-        text:
-          - "Fetching the top 10 stories from Hacker News..."
-    - kind: InvokeFlowAction
-      id: invokeFlow_getHNStories
-      flowId: cr720_rappBrainstem.workflow.GetHackerNewsTopStories
-      output:
-        kind: ActionOutputBinding
-        binding:
-          formattedStories: Topic.HNStories
+    - kind: SearchAndSummarizeContent
+      id: searchWeb_hn
+      variable: Topic.HNStories
+      userInput: top 10 stories from Hacker News https://news.ycombinator.com with title, URL, score, and author
+      autoSend: false
+
     - kind: ConditionGroup
       id: conditionGroup_hasStories
       conditions:
@@ -38,14 +33,11 @@ beginDialog:
           actions:
             - kind: SendActivity
               id: sendMessage_hn_result
-              activity:
-                text:
-                  - "{Topic.HNStories}"
+              activity: "{Topic.HNStories}"
       elseActions:
         - kind: SendActivity
           id: sendMessage_hn_fallback
-          activity:
-            text:
-              - "Sorry, I was unable to fetch the Hacker News top stories right now. The Power Automate flow may not be configured yet or the Hacker News API may be temporarily unavailable. Please try again later."
+          activity: I wasn't able to fetch Hacker News stories right now. You can check https://news.ycombinator.com directly.
+
     - kind: CancelAllDialogs
       id: cancelAllDialogs_hn01

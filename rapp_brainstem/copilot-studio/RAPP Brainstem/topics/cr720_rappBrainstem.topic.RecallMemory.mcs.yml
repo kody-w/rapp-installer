@@ -2,6 +2,22 @@ mcs.metadata:
   componentName: Recall Memory
   description: Recalls stored memories from previous conversations. Use this when the user asks what you remember or know about them.
 kind: AdaptiveDialog
+inputs:
+  - kind: AutomaticTaskInput
+    propertyName: Keywords
+    description: Optional comma-separated keywords to filter memories by topic or subject. Always provide at least an empty value.
+    entity: StringPrebuiltEntity
+    shouldPromptUser: false
+    defaultValue: =" "
+
+  - kind: AutomaticTaskInput
+    propertyName: FullRecall
+    description: Set to true to return all memories without filtering. Set to true when the user does not specify a particular topic or keyword to search for.
+    entity: StringPrebuiltEntity
+    shouldPromptUser: false
+    defaultValue: ="true"
+
+modelDescription: Use this when the user asks what you remember about them, wants to recall past conversations, or asks you to search stored memories. Always set Keywords to a space if no keywords are specified. Set FullRecall to true if no specific filter is needed.
 beginDialog:
   kind: OnRecognizedIntent
   id: main
@@ -16,11 +32,52 @@ beginDialog:
       - Search my memories
       - What do you know about me
       - What did I say last time
+
   actions:
-    - kind: SendActivity
-      id: sendMessage_recall_result
-      activity:
-        text:
-          - "Memory recall is not yet connected to Dataverse. Once the Power Automate flow is configured, I will be able to retrieve your stored memories here. For now, I can still help you with other things!"
+    - kind: InvokeFlowAction
+      id: invokeFlowAction_TvDUTq
+      flowId: 09a1406a-f2d8-5768-acf6-001d2d740c90
+      input:
+        binding:
+          text: =Coalesce(Topic.Keywords, " ")
+          text_1: =Coalesce(Topic.FullRecall, "true")
+      output:
+        binding:
+          output: Topic.FormattedMemories
+
+    - kind: ConditionGroup
+      id: conditionGroup_hasMemR3
+      conditions:
+        - id: conditionItem_hasMemR3
+          condition: =!IsBlank(Topic.FormattedMemories)
+          actions:
+            - kind: SendActivity
+              id: sendMessage_recallRes
+              activity: "{Topic.FormattedMemories}"
+
+      elseActions:
+        - kind: SendActivity
+          id: sendMessage_noMemory
+          activity: I do not have any stored memories matching your request. If you would like me to remember something, just tell me and I will save it for future conversations.
+
     - kind: CancelAllDialogs
       id: cancelAllDialogs_rm01
+
+inputType:
+  properties:
+    Keywords:
+      displayName: Keywords
+      description: Comma-separated keywords to filter memories.
+      type: String
+
+    FullRecall:
+      displayName: FullRecall
+      description: Set to true to return all memories without filtering.
+      type: String
+
+outputType:
+  properties:
+    FormattedMemories:
+      displayName: FormattedMemories
+      description: Formatted memory text returned by the flow.
+      type: String

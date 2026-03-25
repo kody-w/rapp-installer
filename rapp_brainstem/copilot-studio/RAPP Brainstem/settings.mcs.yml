@@ -13,7 +13,6 @@ configuration:
     GenerativeActionsEnabled: true
 
   isAgentConnectable: true
-  publishOnCreate: false
   publishOnImport: true
   gPTSettings:
     defaultSchemaName: cr720_rappBrainstem.gpt.default
@@ -28,6 +27,6 @@ configuration:
   recognizer:
     kind: GenerativeAIRecognizer
 
-publishedOn: 2026-03-08T22:34:51.0000000Z
+publishedOn: 2026-03-24T23:12:18.0000000Z
 template: default-2.1.0
 language: 1033
