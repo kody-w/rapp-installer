@@ -13,7 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE="$SCRIPT_DIR/copilot-studio/RAPP Brainstem"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE="$PROJECT_ROOT/copilot-studio/RAPP Brainstem"
 MANAGE_AGENT="$HOME/.claude/plugins/cache/skills-for-copilot-studio/copilot-studio/1.0.4/scripts/manage-agent.bundle.js"
 
 # Read conn.json

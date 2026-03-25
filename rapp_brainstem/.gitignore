@@ -9,6 +9,8 @@ __pycache__/
 
 # Node
 node_modules/
+package.json
+package-lock.json
 
 # Runtime data
 .remote_agents/
@@ -19,13 +21,13 @@ voice.zip
 # Claude Code
 .claude/
 
-# Copilot Studio (generated/pulled — recreated by deploy.sh or CopilotStudio agent)
+# Copilot Studio (generated — recreated by CopilotStudio agent)
 copilot-studio/
 
-# Test artifacts
-tests/.auth/
-tests/test-results/
+# Test infra
+playwright.config.*
 playwright-report/
+tests/
 
-# Build artifacts
+# Scratch
 publish.js

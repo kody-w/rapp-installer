@@ -1,5 +1,5 @@
 """
-CopilotStudio — Unified Copilot Studio agent (export + deploy + test).
+CopilotStudio — Unified Copilot Studio agent (export + deploy).
 
 Merges all Copilot Studio capabilities into a single agent file:
 
@@ -18,11 +18,6 @@ Merges all Copilot Studio capabilities into a single agent file:
     scan        — discover Python agents and their classifications
     preview     — show what YAML would be generated without writing
     export      — write migration specs + YAML to workspace
-
-  TEST (Playwright browser testing):
-    test        — run full Playwright test suite
-    quick-test  — run a single utterance test
-    test-results — show latest test results
 
 Battle-tested YAML templates with Coalesce() null guards, all
 StringPrebuiltEntity, inputType/outputType blocks, and auto-detected
@@ -755,81 +750,6 @@ def _generate_spec(info: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Playwright testing
-# ---------------------------------------------------------------------------
-
-def _run_playwright_tests(project_root: Path, headed: bool | None) -> dict:
-    auth_exists = (project_root / "tests" / ".auth" / "state.json").exists()
-    cmd = ["npx", "playwright", "test", "tests/copilot_studio_test.js"]
-    if headed is None:
-        headed = not auth_exists
-    if headed:
-        cmd.append("--headed")
-    try:
-        result = subprocess.run(cmd, cwd=str(project_root),
-                                capture_output=True, text=True, timeout=600)
-        output = {
-            "status": "success" if result.returncode == 0 else "failed",
-            "exit_code": result.returncode,
-            "stdout": result.stdout[-3000:] if result.stdout else "",
-            "stderr": result.stderr[-2000:] if result.stderr else "",
-        }
-        results_dir = project_root / "tests" / "test-results"
-        if results_dir.exists():
-            output["screenshots"] = [str(s) for s in results_dir.glob("*.png")]
-        return output
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": "Tests timed out after 10 minutes"}
-    except FileNotFoundError:
-        return {"status": "error", "message": "npx not found — install Node.js"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-def _run_quick_test(project_root: Path, utterance: str, headed: bool | None) -> dict:
-    test_script = project_root / "tests" / "quick_test.js"
-    if not test_script.exists():
-        return {"status": "error", "message": "tests/quick_test.js not found"}
-    auth_exists = (project_root / "tests" / ".auth" / "state.json").exists()
-    cmd = ["node", str(test_script), utterance]
-    if headed or (headed is None and not auth_exists):
-        cmd.append("--headed")
-    try:
-        result = subprocess.run(cmd, cwd=str(project_root),
-                                capture_output=True, text=True, timeout=300)
-        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
-        output = {"status": "unknown", "raw": result.stdout[-2000:]}
-        for line in reversed(lines):
-            try:
-                parsed = json.loads(line)
-                if "status" in parsed or "response" in parsed:
-                    output = parsed
-                    break
-            except json.JSONDecodeError:
-                continue
-        if result.stderr:
-            output["log"] = result.stderr[-1000:]
-        return output
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "message": "Test timed out after 5 minutes"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-def _get_test_results(project_root: Path) -> dict:
-    results_dir = project_root / "tests" / "test-results"
-    if not results_dir.exists():
-        return {"status": "info", "message": "No test results yet. Run tests first."}
-    html_report = project_root / "playwright-report" / "index.html"
-    return {
-        "status": "success",
-        "screenshots": [str(s) for s in sorted(results_dir.glob("*.png"))],
-        "html_report": str(html_report) if html_report.exists() else None,
-        "results_dir": str(results_dir),
-    }
-
-
-# ---------------------------------------------------------------------------
 # The Agent
 # ---------------------------------------------------------------------------
 
@@ -853,8 +773,7 @@ class CopilotStudioAgent(BasicAgent):
                         "enum": [
                             "deploy", "generate", "push", "pull", "status",
                             "install", "changes", "list-envs", "list-agents",
-                            "scan", "preview", "export",
-                            "test", "quick-test", "test-results"
+                            "scan", "preview", "export"
                         ]
                     },
                     "workspace": {
@@ -872,14 +791,6 @@ class CopilotStudioAgent(BasicAgent):
                         "type": "string",
                         "description": "Power Platform environment ID (auto-detected)"
                     },
-                    "utterance": {
-                        "type": "string",
-                        "description": "For action='quick-test': the message to send to the agent."
-                    },
-                    "headed": {
-                        "type": "boolean",
-                        "description": "For test actions: run with visible browser window."
-                    }
                 },
                 "required": []
             }
@@ -907,10 +818,6 @@ class CopilotStudioAgent(BasicAgent):
             "scan": self._do_scan,
             "preview": self._do_preview,
             "export": self._do_export,
-            # Test
-            "test": self._do_test,
-            "quick-test": self._do_quick_test,
-            "test-results": self._do_test_results,
         }
         handler = handlers.get(action)
         if not handler:
@@ -1076,20 +983,6 @@ class CopilotStudioAgent(BasicAgent):
             "specs_written": written,
             "yaml_result": gen_result,
         }, indent=2)
-
-    # -- test (Playwright) -------------------------------------------------
-
-    def _do_test(self, **kwargs) -> str:
-        project_root = kwargs["project_root"]
-        return json.dumps(_run_playwright_tests(project_root, kwargs.get("headed")), indent=2)
-
-    def _do_quick_test(self, **kwargs) -> str:
-        project_root = kwargs["project_root"]
-        utterance = kwargs.get("utterance", "Hi there!")
-        return json.dumps(_run_quick_test(project_root, utterance, kwargs.get("headed")), indent=2)
-
-    def _do_test_results(self, **kwargs) -> str:
-        return json.dumps(_get_test_results(kwargs["project_root"]), indent=2)
 
     # -- helpers ------------------------------------------------------------
 
