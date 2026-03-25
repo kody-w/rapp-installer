@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RAPP — Rapid Agent Prototyping Platform</title>
-<meta name="description" content="RAPP — build AI agents that start local and scale to Azure and M365 Copilot. Two paths, one platform.">
+<title>RAPP Brainstem</title>
+<meta name="description" content="RAPP Brainstem — local-first AI agent server. One dependency: a GitHub account.">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -19,93 +19,34 @@
     font-family: "SF Mono", "Fira Code", monospace; font-size: 13px;
     background: #161b22; padding: 2px 6px; border-radius: 4px;
   }
-  .hero { text-align: center; max-width: 660px; margin-bottom: 48px; }
+  .hero { text-align: center; max-width: 620px; margin-bottom: 48px; }
   .hero .logo { font-size: 64px; margin-bottom: 16px; }
   .hero h1 { font-size: 36px; font-weight: 700; margin-bottom: 8px; }
   .hero p { color: #8b949e; font-size: 16px; line-height: 1.6; }
   .hero .tagline { color: #58a6ff; font-weight: 600; font-size: 14px; margin-top: 12px; }
 
-  /* ── Choose your path ── */
-  .paths { max-width: 660px; width: 100%; margin-bottom: 48px; }
-  .paths h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; text-align: center; color: #8b949e; }
-
-  .path-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 600px) { .path-cards { grid-template-columns: 1fr; } }
-
-  .path-card {
-    background: #161b22; border: 2px solid #21262d; border-radius: 12px;
-    padding: 24px; cursor: pointer; transition: border-color 0.2s, transform 0.1s;
-    position: relative;
-  }
-  .path-card:hover { transform: translateY(-2px); }
-  .path-card.active { border-color: #238636; }
-  .path-card .path-icon { font-size: 32px; margin-bottom: 12px; }
-  .path-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-  .path-card .path-sub { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
-  .path-card .path-desc { font-size: 12px; color: #484f58; line-height: 1.5; }
-  .path-card .path-badge {
-    position: absolute; top: 12px; right: 12px;
-    font-size: 10px; font-weight: 600; padding: 3px 8px;
-    border-radius: 10px; text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  .path-card:nth-child(1) .path-badge { background: #23863633; color: #3fb950; }
-  .path-card:nth-child(2) .path-badge { background: #1f6feb33; color: #58a6ff; }
-
-  /* ── Install widget ── */
-  .install-widget {
-    max-width: 660px; width: 100%; margin-bottom: 48px;
+  .one-liner {
+    max-width: 620px; width: 100%;
     background: #161b22; border: 2px solid #238636; border-radius: 12px;
-    overflow: hidden; transition: border-color 0.15s;
+    padding: 20px 24px; margin-bottom: 48px;
+    text-align: center; cursor: pointer;
+    transition: border-color 0.15s, transform 0.1s;
   }
-  .install-tabs {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 16px; border-bottom: 1px solid #21262d; height: 40px;
+  .one-liner:hover { border-color: #3fb950; transform: translateY(-1px); }
+  .one-liner .label { font-size: 12px; color: #3fb950; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .one-liner .cmd {
+    font-family: "SF Mono", "Fira Code", monospace; font-size: 15px;
+    color: #e6edf3; word-break: break-all;
   }
-  .install-tabs-left { display: flex; align-items: center; gap: 2px; }
-  .install-tabs-left .dots { display: flex; gap: 5px; margin-right: 14px; }
-  .install-tabs-left .dots span { width: 10px; height: 10px; border-radius: 50%; }
-  .install-tabs-left .dots span:nth-child(1) { background: #f85149; }
-  .install-tabs-left .dots span:nth-child(2) { background: #d29922; }
-  .install-tabs-left .dots span:nth-child(3) { background: #3fb950; }
-  .install-tab {
-    background: none; border: none; color: #484f58; font-size: 12px;
-    padding: 8px 14px; cursor: pointer; font-family: "SF Mono", "Fira Code", monospace;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
-    transition: color 0.15s, border-color 0.15s;
-  }
-  .install-tab:hover { color: #8b949e; }
-  .install-tab.active { color: #e6edf3; border-bottom-color: #238636; }
-  .install-tabs-right { display: flex; align-items: center; gap: 10px; }
-  .os-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e; }
-  .os-toggle .os-name { font-family: "SF Mono", "Fira Code", monospace; }
-  .os-toggle .change-btn {
-    background: none; border: none; color: #58a6ff; font-size: 12px;
-    cursor: pointer; font-family: "SF Mono", "Fira Code", monospace;
-  }
-  .os-toggle .change-btn:hover { text-decoration: underline; }
-  .install-body { padding: 20px 24px; cursor: pointer; }
-  .install-body .comment {
-    color: #3fb950; font-family: "SF Mono", "Fira Code", monospace;
-    font-size: 13px; margin-bottom: 8px;
-  }
-  .install-body .prompt {
-    font-family: "SF Mono", "Fira Code", monospace; font-size: 14px;
-    color: #e6edf3; display: flex; align-items: center; gap: 8px;
-  }
-  .install-body .prompt .dollar { color: #8b949e; user-select: none; }
-  .install-body .copy-icon {
-    margin-left: auto; font-size: 16px; opacity: 0.3;
-    transition: opacity 0.15s; cursor: pointer; flex-shrink: 0;
-  }
-  .install-body:hover .copy-icon { opacity: 1; }
-  .install-body.copied .copy-icon { opacity: 1; }
-  .install-hint { padding: 0 24px 14px; font-size: 11px; color: #484f58; text-align: center; }
+  .one-liner .hint { font-size: 11px; color: #484f58; margin-top: 8px; }
+  .one-liner.copied .hint { color: #3fb950; }
 
-  /* ── Tiers ── */
-  .tiers { max-width: 660px; width: 100%; }
+  .tiers { max-width: 620px; width: 100%; }
+
   .tier {
     background: #161b22; border: 1px solid #21262d; border-radius: 12px;
-    margin-bottom: 24px; overflow: hidden; transition: border-color 0.15s;
+    margin-bottom: 24px; overflow: hidden;
+    transition: border-color 0.15s;
   }
   .tier:hover { border-color: #30363d; }
   .tier-header {
@@ -122,10 +63,15 @@
   .tier-badge.start { background: #238636; color: #fff; }
   .tier-badge.next { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
   .tier-badge.advanced { background: #8b5cf633; color: #a78bfa; border: 1px solid #8b5cf6; }
-  .tier-arrow { color: #484f58; font-size: 18px; transition: transform 0.2s; flex-shrink: 0; }
+  .tier-arrow {
+    color: #484f58; font-size: 18px; transition: transform 0.2s; flex-shrink: 0;
+  }
   .tier.open .tier-arrow { transform: rotate(90deg); }
-  .tier-body { display: none; padding: 0 24px 24px; border-top: 1px solid #21262d; }
+  .tier-body {
+    display: none; padding: 0 24px 24px; border-top: 1px solid #21262d;
+  }
   .tier.open .tier-body { display: block; }
+
   .tier-body p { color: #8b949e; font-size: 14px; line-height: 1.6; margin-top: 16px; }
   .tier-body .metaphor { color: #d2a8ff; font-style: italic; font-size: 13px; margin-top: 12px; }
 
@@ -145,14 +91,81 @@
   }
   .cmd:hover { border-color: #30363d; }
   .cmd::after {
-    content: ""; position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    content: "📋"; position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
     font-size: 13px; opacity: 0.3; transition: opacity 0.15s;
   }
   .cmd:hover::after { opacity: 1; }
-  .cmd.copied::after { content: ""; color: #3fb950; opacity: 1; }
+  .cmd.copied::after { content: "✓"; color: #3fb950; opacity: 1; }
+
+  /* ── Install widget ── */
+  .install-widget {
+    max-width: 620px; width: 100%; margin-bottom: 48px;
+    background: #161b22; border: 2px solid #238636; border-radius: 12px;
+    overflow: hidden; transition: border-color 0.15s;
+  }
+  .install-tabs {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; border-bottom: 1px solid #21262d; height: 40px;
+  }
+  .install-tabs-left {
+    display: flex; align-items: center; gap: 2px;
+  }
+  .install-tabs-left .dots {
+    display: flex; gap: 5px; margin-right: 14px;
+  }
+  .install-tabs-left .dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+  .install-tabs-left .dots span:nth-child(1) { background: #f85149; }
+  .install-tabs-left .dots span:nth-child(2) { background: #d29922; }
+  .install-tabs-left .dots span:nth-child(3) { background: #3fb950; }
+  .install-tab {
+    background: none; border: none; color: #484f58; font-size: 12px;
+    padding: 8px 14px; cursor: pointer; font-family: "SF Mono", "Fira Code", monospace;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .install-tab:hover { color: #8b949e; }
+  .install-tab.active {
+    color: #e6edf3; border-bottom-color: #238636;
+  }
+  .install-tabs-right {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .os-toggle {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e;
+  }
+  .os-toggle .os-name { font-family: "SF Mono", "Fira Code", monospace; }
+  .os-toggle .change-btn {
+    background: none; border: none; color: #58a6ff; font-size: 12px;
+    cursor: pointer; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", monospace;
+  }
+  .os-toggle .change-btn:hover { text-decoration: underline; }
+  .install-body {
+    padding: 20px 24px; cursor: pointer;
+  }
+  .install-body .comment {
+    color: #3fb950; font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 13px; margin-bottom: 8px;
+  }
+  .install-body .prompt {
+    font-family: "SF Mono", "Fira Code", monospace; font-size: 14px;
+    color: #e6edf3; display: flex; align-items: center; gap: 8px;
+  }
+  .install-body .prompt .dollar { color: #8b949e; user-select: none; }
+  .install-body .copy-icon {
+    margin-left: auto; font-size: 16px; opacity: 0.3;
+    transition: opacity 0.15s; cursor: pointer; flex-shrink: 0;
+  }
+  .install-body:hover .copy-icon { opacity: 1; }
+  .install-body.copied .copy-icon { opacity: 1; }
+  .install-hint {
+    padding: 0 24px 14px; font-size: 11px; color: #484f58; text-align: center;
+  }
 
   .status-bar {
-    max-width: 660px; width: 100%; margin-top: 16px;
+    max-width: 620px; width: 100%; margin-top: 16px;
     background: #161b22; border: 1px solid #21262d; border-radius: 12px;
     padding: 16px 24px; text-align: center;
   }
@@ -174,41 +187,21 @@
   .open-btn:hover { background: #2ea043; }
   .open-btn:disabled { opacity: 0.4; cursor: default; }
 
-  .links { margin-top: 32px; text-align: center; font-size: 13px; color: #484f58; }
+  .links {
+    margin-top: 32px; text-align: center; font-size: 13px; color: #484f58;
+  }
   .links a { margin: 0 12px; }
 </style>
 </head>
 <body>
 
 <div class="hero">
-  <div class="logo">&#x1f9e0;</div>
-  <h1>RAPP</h1>
-  <p>Build AI agents that start local and scale to Azure and M365 Copilot.<br>Two paths. One platform. Start where you want.</p>
+  <div class="logo">🧠</div>
+  <h1>RAPP Brainstem</h1>
+  <p>A local-first AI agent server powered by GitHub Copilot.<br>No API keys. No cloud setup. Just your GitHub account.</p>
   <div class="tagline">Start simple. Layer up when you're ready.</div>
 </div>
 
-<!-- ── Choose your path ── -->
-<div class="paths">
-  <h2>Choose your starting point</h2>
-  <div class="path-cards">
-    <div class="path-card active" onclick="selectPath('brainstem')">
-      <span class="path-badge">Local</span>
-      <div class="path-icon">&#x1f9e0;</div>
-      <h3>Brainstem</h3>
-      <div class="path-sub">Local agent server</div>
-      <div class="path-desc">Flask + GitHub Copilot. No cloud, no API keys. Best for learning and prototyping.</div>
-    </div>
-    <div class="path-card" onclick="selectPath('hippocampus')">
-      <span class="path-badge">Cloud-ready</span>
-      <div class="path-icon">&#x2601;&#xFE0F;</div>
-      <h3>Hippocampus</h3>
-      <div class="path-sub">Azure Functions + persistent memory</div>
-      <div class="path-desc">Full memory system, agent library, chat UI. Runs locally, deploys to Azure when ready.</div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Install widget ── -->
 <div class="install-widget" id="install-widget">
   <div class="install-tabs">
     <div class="install-tabs-left">
@@ -224,32 +217,31 @@
     </div>
   </div>
   <div class="install-body" onclick="copyInstall(this)">
-    <div class="comment" id="install-comment"></div>
+    <div class="comment" id="install-comment"># Works everywhere. Installs everything. 🧠</div>
     <div class="prompt">
       <span class="dollar">$</span>
-      <span id="install-cmd"></span>
-      <span class="copy-icon" id="copy-icon">&#x1F4CB;</span>
+      <span id="install-cmd">curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash</span>
+      <span class="copy-icon" id="copy-icon">📋</span>
     </div>
   </div>
-  <div class="install-hint" id="install-hint"></div>
+  <div class="install-hint" id="install-hint">Works on macOS &amp; Linux. Auto-installs Python 3.11 if missing.</div>
 </div>
 
-<!-- ── Tiers ── -->
 <div class="tiers">
 
   <!-- TIER 1: BRAINSTEM -->
   <div class="tier open" onclick="toggleTier(event, this)">
     <div class="tier-header">
-      <div class="tier-icon">&#x1f9e0;</div>
+      <div class="tier-icon">🧠</div>
       <div class="tier-title">
-        <h2>Tier 1 &mdash; The Brainstem</h2>
-        <div class="subtitle">Local agent server &mdash; the survival basics</div>
+        <h2>The Brainstem</h2>
+        <div class="subtitle">Local agent server — the survival basics</div>
       </div>
       <span class="tier-badge start">Start here</span>
-      <span class="tier-arrow">&#x25B6;</span>
+      <span class="tier-arrow">▶</span>
     </div>
     <div class="tier-body">
-      <p class="metaphor">The biological brainstem keeps you alive &mdash; breathing, heartbeat, reflexes. Your AI brainstem does the same: it runs the core agent loop, calls tools, and responds. Everything else builds on top of this.</p>
+      <p class="metaphor">The biological brainstem keeps you alive — breathing, heartbeat, reflexes. Your AI brainstem does the same: it runs the core agent loop, calls tools, and responds. Everything else builds on top of this.</p>
       <div class="steps">
         <div class="step">
           <h3>1. Authenticate with GitHub</h3>
@@ -274,76 +266,79 @@
     </div>
   </div>
 
-  <!-- TIER 2: HIPPOCAMPUS -->
+  <!-- TIER 2: AZURE -->
   <div class="tier" onclick="toggleTier(event, this)">
     <div class="tier-header">
-      <div class="tier-icon">&#x2601;&#xFE0F;</div>
+      <div class="tier-icon">☁️</div>
       <div class="tier-title">
-        <h2>Tier 2 &mdash; The Hippocampus</h2>
-        <div class="subtitle">Azure Functions + persistent memory</div>
+        <h2>The Hippocampus</h2>
+        <div class="subtitle">Persistent memory — runs local, deploys to Azure</div>
       </div>
-      <span class="tier-badge next">Cloud-ready</span>
-      <span class="tier-arrow">&#x25B6;</span>
+      <span class="tier-badge next">Next step</span>
+      <span class="tier-arrow">▶</span>
     </div>
     <div class="tier-body">
-      <p class="metaphor">The hippocampus is where memories form. This tier gives your agent persistent memory, an agent library, and the Azure Functions runtime. It runs locally first &mdash; deploy to Azure when you're ready.</p>
+      <p class="metaphor">The hippocampus is where memories form. This tier gives your agent persistent memory, an agent library, and the Azure Functions runtime. It runs locally first — deploy to Azure when you're ready. This uses <strong><a href="https://github.com/kody-w/CommunityRAPP">CommunityRAPP</a></strong> (open source) — the Azure Function project you'll deploy for customers.</p>
       <div class="steps">
         <div class="step">
           <h3>1. Create a project</h3>
-          <p>One command clones CommunityRAPP, sets up a venv, installs dependencies, and creates a start script. No Azure account or API keys needed.</p>
+          <p>One command clones CommunityRAPP, sets up Python, installs Azure Functions Core Tools, creates a venv, and generates a start script. No Azure account or API keys needed.</p>
           <div class="cmd" onclick="copyCmd(event, this)">curl -fsSL https://raw.githubusercontent.com/kody-w/rapp-installer/main/community_rapp/install.sh | bash</div>
-          <p style="margin-top:6px;font-size:12px;color:#484f58;">Windows: <code style="cursor:pointer" onclick="copyCmd(event, this)">irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/community_rapp/install.ps1 | iex</code></p>
+          <p style="margin-top:6px;font-size:12px;color:#8b949e;">Windows: <code style="cursor:pointer" onclick="copyCmd(event, this)">irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/community_rapp/install.ps1 | iex</code></p>
         </div>
         <div class="step">
-          <h3>2. Start it</h3>
-          <p>The chat UI walks you through GitHub device-code auth. No manual env vars, no config files to edit.</p>
+          <h3>2. Start it &amp; authenticate</h3>
+          <p>Open <code>index.html</code> in your browser and send a message. The chat UI walks you through GitHub device-code auth automatically — no env vars to set.</p>
           <div class="cmd" onclick="copyCmd(event, this)">cd ~/rapp-projects/my-project && ./start.sh</div>
         </div>
         <div class="step">
-          <h3>3. Talk to it</h3>
-          <p>Open <code>index.html</code> in your browser. Send a message. Memories persist across conversations and restarts.</p>
-        </div>
-        <div class="step">
-          <h3>4. Deploy to Azure (when ready)</h3>
+          <h3>3. Deploy to Azure (when ready)</h3>
           <p>Edit <code>local.settings.json</code> with your Azure OpenAI credentials, then publish. Or use the ARM template for a full deployment.</p>
           <div class="cmd" onclick="copyCmd(event, this)">func azure functionapp publish YOUR_APP_NAME --build remote</div>
-          <p style="margin-top:8px"><a href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fkody-w%2Frapp-installer%2Fmain%2Fazuredeploy.json" target="_blank"><img src="https://aka.ms/deploytoazurebutton" alt="Deploy to Azure" style="height:32px"></a></p>
+          <p style="margin-top:8px">Or click to deploy directly from the Azure Portal:</p>
+          <p style="margin-top:4px"><a href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fkody-w%2Frapp-installer%2Fmain%2Fazuredeploy.json" target="_blank"><img src="https://aka.ms/deploytoazurebutton" alt="Deploy to Azure" style="height:32px"></a></p>
+        </div>
+        <div class="step">
+          <h3>4. Test it</h3>
+          <p>Hit your deployed endpoint to verify the agent is live in the cloud.</p>
+          <div class="cmd" onclick="copyCmd(event, this)">curl -s https://YOUR_APP_NAME.azurewebsites.net/api/health | python3 -m json.tool</div>
         </div>
       </div>
       <p><strong>What you learn:</strong> Azure Functions, persistent memory, agent discovery, Azure OpenAI, managed identity.</p>
+      <p style="margin-top:8px"><a href="https://kody-w.github.io/CommunityRAPP/onboard.html">Full onboarding guide</a></p>
     </div>
   </div>
 
-  <!-- TIER 3: NERVOUS SYSTEM -->
+  <!-- TIER 3: COPILOT STUDIO -->
   <div class="tier" onclick="toggleTier(event, this)">
     <div class="tier-header">
-      <div class="tier-icon">&#x1F916;</div>
+      <div class="tier-icon">🤖</div>
       <div class="tier-title">
-        <h2>Tier 3 &mdash; The Nervous System</h2>
-        <div class="subtitle">Connect to Copilot Studio &mdash; reach into M365</div>
+        <h2>The Nervous System</h2>
+        <div class="subtitle">Connect to Copilot Studio — reach into M365</div>
       </div>
-      <span class="tier-badge advanced">Enterprise</span>
-      <span class="tier-arrow">&#x25B6;</span>
+      <span class="tier-badge advanced">Advanced</span>
+      <span class="tier-arrow">▶</span>
     </div>
     <div class="tier-body">
-      <p class="metaphor">Your nervous system extends your brain's reach to every part of your body. Copilot Studio does the same: it connects your agent to Teams, M365 Copilot, and the entire Microsoft ecosystem.</p>
+      <p class="metaphor">Your nervous system extends your brain's reach to every part of your body — eyes, ears, hands. Copilot Studio does the same: it connects your agent to Teams, M365 Copilot, and the entire Microsoft ecosystem. Your brainstem becomes an enterprise AI.</p>
       <div class="steps">
         <div class="step">
           <h3>1. Download the solution</h3>
-          <p>Grab the Power Platform solution package. This <code>.zip</code> contains the declarative agent, connectors, and flows preconfigured for your Azure Function.</p>
+          <p>Grab the Power Platform solution package from the repo. This <code>.zip</code> contains the declarative agent, connectors, and flows preconfigured for your Azure Function.</p>
           <div class="cmd" onclick="copyCmd(event, this)">curl -fsSL -o MSFTAIBASMultiAgentCopilot.zip https://raw.githubusercontent.com/kody-w/rapp-installer/main/MSFTAIBASMultiAgentCopilot_1_0_0_5.zip</div>
         </div>
         <div class="step">
           <h3>2. Import into Power Platform</h3>
-          <p>Go to <a href="https://make.powerapps.com" target="_blank">make.powerapps.com</a> &rarr; Solutions &rarr; Import &rarr; upload the <code>.zip</code>.</p>
+          <p>Go to <a href="https://make.powerapps.com" target="_blank">make.powerapps.com</a> → Solutions → Import → upload the <code>.zip</code>. This creates the Copilot Studio agent and Power Automate flows in your environment.</p>
         </div>
         <div class="step">
           <h3>3. Wire the connector</h3>
-          <p>Open the Power Automate flow, update the HTTP URL to your Azure Function endpoint. Add your Function Key if using key-based auth.</p>
+          <p>Open the imported Power Automate flow and update the HTTP action URL to point to your deployed Azure Function endpoint from Step 2. Add your Function Key if using key-based auth.</p>
         </div>
         <div class="step">
           <h3>4. Publish to Teams &amp; M365 Copilot</h3>
-          <p>In Copilot Studio, publish the agent. Same logic you tested locally &mdash; now enterprise-wide.</p>
+          <p>In Copilot Studio, publish the agent. Your users can now talk to it in Teams, M365 Copilot, and any channel Copilot Studio supports. Same agent logic you tested locally — now enterprise-wide.</p>
         </div>
       </div>
       <p><strong>What you learn:</strong> Copilot Studio, declarative agents, Power Platform solutions, Teams integration, enterprise AI deployment.</p>
@@ -352,7 +347,6 @@
 
 </div>
 
-<!-- ── Status bar ── -->
 <div class="status-bar" id="status-bar">
   <span class="dot checking" id="dot"></span>
   <span class="status-label" id="status-label">Checking brainstem...</span>
@@ -361,89 +355,52 @@
 </div>
 
 <div class="links">
-  <a href="https://github.com/kody-w/rapp-installer">Brainstem GitHub</a>
-  <a href="https://github.com/kody-w/CommunityRAPP">Hippocampus GitHub</a>
+  <a href="https://github.com/kody-w/rapp-installer">GitHub</a>
+  <a href="https://github.com/kody-w/CommunityRAPP">Hippocampus Repo</a>
   <a href="https://kody-w.github.io/CommunityRAPP/onboard.html">Hippocampus Guide</a>
-  <a href="https://github.com/kody-w/AI-Agent-Templates">Agent Library</a>
+  <a href="rapp_brainstem/README.md">Brainstem Docs</a>
   <a href="https://github.com/marketplace/models">GitHub Models</a>
 </div>
 
 <script>
-  // ── Path + install data ──
+  // ── Install widget ──
   const installs = {
-    brainstem: {
-      'macOS/Linux': {
-        'one-liner': {
-          comment: '# Installs everything. Works on a fresh machine.',
-          cmd: 'curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash',
-          hint: 'Auto-installs Python 3.11, Git, GitHub CLI if missing.'
-        },
-        'manual': {
-          comment: '# Clone, install deps, run.',
-          cmd: 'git clone https://github.com/kody-w/rapp-installer.git ~/.brainstem/src && cd ~/.brainstem/src/rapp_brainstem && pip3 install -r requirements.txt && ./start.sh',
-          hint: 'Requires Python 3.11+ and Git.'
-        }
+    'macOS/Linux': {
+      'one-liner': {
+        comment: '# Works everywhere. Installs everything. 🧠',
+        cmd: 'curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash',
+        hint: 'Works on macOS & Linux. Auto-installs Python 3.11 if missing.'
       },
-      'Windows': {
-        'one-liner': {
-          comment: '# Works on factory Windows 11. Installs via winget.',
-          cmd: 'irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex',
-          hint: 'Run in PowerShell. Auto-installs Python, Git & GitHub CLI.'
-        },
-        'manual': {
-          comment: '# Clone, install deps, run.',
-          cmd: 'git clone https://github.com/kody-w/rapp-installer.git %USERPROFILE%\\.brainstem\\src && cd %USERPROFILE%\\.brainstem\\src\\rapp_brainstem && pip install -r requirements.txt && python brainstem.py',
-          hint: 'Requires Python 3.11+ and Git.'
-        }
+      'manual': {
+        comment: '# Clone, install deps, done.',
+        cmd: 'git clone https://github.com/kody-w/rapp-installer.git ~/.brainstem/src && cd ~/.brainstem/src/rapp_brainstem && pip3 install -r requirements.txt && ./start.sh',
+        hint: 'Requires Python 3.11+ and Git already installed.'
       }
     },
-    hippocampus: {
-      'macOS/Linux': {
-        'one-liner': {
-          comment: '# Creates an isolated project with venv and dependencies.',
-          cmd: 'curl -fsSL https://raw.githubusercontent.com/kody-w/rapp-installer/main/community_rapp/install.sh | bash',
-          hint: 'Auto-installs Python 3.11, Azure Functions Core Tools if missing.'
-        },
-        'manual': {
-          comment: '# Clone, venv, install, run.',
-          cmd: 'git clone --depth 1 https://github.com/kody-w/CommunityRAPP.git ~/rapp-projects/my-project && cd ~/rapp-projects/my-project && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && func start',
-          hint: 'Requires Python 3.11+, Git, Azure Functions Core Tools.'
-        }
+    'Windows': {
+      'one-liner': {
+        comment: '# Factory Windows 11 ready. Installs everything via winget. 🧠',
+        cmd: 'irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex',
+        hint: 'Run in PowerShell. Auto-installs Python, Git & GitHub CLI via winget.'
       },
-      'Windows': {
-        'one-liner': {
-          comment: '# Creates an isolated project with venv and dependencies.',
-          cmd: 'irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/community_rapp/install.ps1 | iex',
-          hint: 'Run in PowerShell. Auto-installs Python & Azure Functions Core Tools.'
-        },
-        'manual': {
-          comment: '# Clone, venv, install, run.',
-          cmd: 'git clone --depth 1 https://github.com/kody-w/CommunityRAPP.git %USERPROFILE%\\rapp-projects\\my-project && cd %USERPROFILE%\\rapp-projects\\my-project && python -m venv .venv && .venv\\Scripts\\Activate.ps1 && pip install -r requirements.txt && func start',
-          hint: 'Requires Python 3.11+, Git, Azure Functions Core Tools.'
-        }
+      'manual': {
+        comment: '# Clone, install deps, done.',
+        cmd: 'git clone https://github.com/kody-w/rapp-installer.git %USERPROFILE%\\.brainstem\\src && cd %USERPROFILE%\\.brainstem\\src\\rapp_brainstem && pip install -r requirements.txt && python brainstem.py',
+        hint: 'Requires Python 3.11+ and Git already installed.'
       }
     }
   };
 
-  let currentPath = 'brainstem';
   let currentOS = navigator.platform.includes('Win') ? 'Windows' : 'macOS/Linux';
   let currentTab = 'one-liner';
 
-  function selectPath(path) {
-    currentPath = path;
-    document.querySelectorAll('.path-card').forEach((c, i) => {
-      c.classList.toggle('active', (i === 0 && path === 'brainstem') || (i === 1 && path === 'hippocampus'));
-    });
-    renderInstall();
-  }
-
   function renderInstall() {
-    const data = installs[currentPath][currentOS][currentTab];
+    const data = installs[currentOS][currentTab];
     document.getElementById('os-label').textContent = currentOS;
     document.getElementById('install-comment').textContent = data.comment;
     document.getElementById('install-cmd').textContent = data.cmd;
     document.getElementById('install-hint').innerHTML = data.hint;
-    document.getElementById('copy-icon').innerHTML = '&#x1F4CB;';
+    document.getElementById('copy-icon').textContent = '📋';
   }
 
   function flipOS() {
@@ -461,9 +418,12 @@
   function copyInstall(el) {
     const text = document.getElementById('install-cmd').textContent;
     navigator.clipboard.writeText(text);
-    document.getElementById('copy-icon').textContent = '\u2713';
+    document.getElementById('copy-icon').textContent = '✓';
     el.classList.add('copied');
-    setTimeout(() => { document.getElementById('copy-icon').innerHTML = '&#x1F4CB;'; el.classList.remove('copied'); }, 2000);
+    setTimeout(() => {
+      document.getElementById('copy-icon').textContent = '📋';
+      el.classList.remove('copied');
+    }, 2000);
   }
 
   renderInstall();
@@ -471,7 +431,8 @@
   // ── Tier commands ──
   function copyCmd(e, el) {
     e.stopPropagation();
-    navigator.clipboard.writeText(el.textContent.trim());
+    const text = el.textContent.trim();
+    navigator.clipboard.writeText(text);
     el.classList.add('copied');
     setTimeout(() => el.classList.remove('copied'), 1500);
   }
@@ -481,7 +442,6 @@
     el.classList.toggle('open');
   }
 
-  // ── Status check ──
   async function checkBrainstem() {
     const dot = document.getElementById('dot');
     const label = document.getElementById('status-label');
@@ -492,16 +452,16 @@
       if (d.status === 'ok') {
         dot.className = 'dot online';
         const agents = d.agents ? d.agents.length : 0;
-        label.textContent = 'Brainstem running \u00b7 ' + d.model + ' \u00b7 ' + agents + ' agent' + (agents !== 1 ? 's' : '');
+        label.textContent = `Brainstem running · ${d.model} · ${agents} agent${agents !== 1 ? 's' : ''}`;
         btn.disabled = false;
       } else {
         dot.className = 'dot offline';
-        label.textContent = 'Brainstem running but not authenticated \u2014 visit localhost:7071';
+        label.textContent = 'Brainstem running but not authenticated — visit localhost:7071';
         btn.disabled = false;
       }
     } catch {
       dot.className = 'dot offline';
-      label.textContent = 'Brainstem not detected \u2014 install to get started';
+      label.textContent = 'Brainstem not detected — install and run brainstem to get started';
       btn.disabled = true;
     }
   }
