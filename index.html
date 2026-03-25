@@ -440,6 +440,11 @@
   function toggleTier(e, el) {
     if (e.target.closest('.cmd') || e.target.closest('a')) return;
     el.classList.toggle('open');
+    if (el.id && el.classList.contains('open')) {
+      history.replaceState(null, '', '#' + el.id);
+    } else if (location.hash) {
+      history.replaceState(null, '', location.pathname);
+    }
   }
 
   async function checkBrainstem() {
