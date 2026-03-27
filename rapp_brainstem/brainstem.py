@@ -1335,7 +1335,7 @@ def diagnostics_export():
     return Response(
         json.dumps(book, indent=2),
         mimetype="application/json",
-        headers={"Content-Disposition": "attachment; filename=book.json"},
+        headers={"Content-Disposition": "attachment; filename=share-this-with-your-admin-to-get-help.json"},
     )
 
 @app.route("/diagnostics/clear", methods=["POST"])
