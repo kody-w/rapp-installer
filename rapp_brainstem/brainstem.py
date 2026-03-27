@@ -1346,6 +1346,92 @@ def diagnostics_clear():
     _tlog_save()
     return jsonify({"status": "ok", "message": "Flight recorder cleared."})
 
+@app.route("/diagnostics/report", methods=["POST"])
+def diagnostics_report():
+    """Create a GitHub issue with session diagnostics so admin can help."""
+    _tlog("diagnostics.report_started")
+    github_token = get_github_token()
+    if not github_token:
+        return jsonify({"error": "Not authenticated — sign in first to submit a report."}), 401
+
+    data = request.get_json(force=True) or {}
+    user_description = data.get("description", "").strip() or "_No description provided_"
+    client_events = data.get("client_events", [])
+
+    # Build the diagnostics snapshot
+    _tlog_save()
+    with _flight_log_lock:
+        events = list(_flight_log)
+
+    # Extract recent errors/warnings for summary
+    err_events = [e for e in events if e.get("level") in ("error", "warn")][-10:]
+    summary_lines = []
+    for e in err_events:
+        d = e.get("data", {})
+        summary_lines.append(f"- `{e['ts']}` **{e['type']}** {json.dumps(d) if d else ''}")
+    error_summary = "\n".join(summary_lines) if summary_lines else "_No errors or warnings recorded_"
+
+    # Build compact book (no secrets, capped size)
+    book = {
+        "version": VERSION,
+        "model": MODEL,
+        "auth_state": {
+            "github_token_exists": True,
+            "token_prefix": github_token[:4] + "...",
+            "copilot_cache_valid": bool(_copilot_token_cache["token"] and time.time() < _copilot_token_cache["expires_at"] - 60),
+            "pending_login": bool(_pending_login),
+        },
+        "agents_loaded": list(load_agents().keys()),
+        "server_events": events[-50:],  # Last 50 server events
+        "client_events": client_events[-50:] if client_events else [],
+    }
+    book_json = json.dumps(book, indent=2)
+    # GitHub issues have a body limit ~65536 chars; trim if needed
+    if len(book_json) > 40000:
+        book["server_events"] = events[-20:]
+        book["client_events"] = client_events[-20:] if client_events else []
+        book_json = json.dumps(book, indent=2)
+
+    issue_body = (
+        f"## User Report\n\n{user_description}\n\n"
+        f"## Environment\n\n"
+        f"- **Version:** {VERSION}\n"
+        f"- **Model:** {MODEL}\n"
+        f"- **Agents:** {', '.join(book['agents_loaded']) or 'none'}\n\n"
+        f"## Recent Warnings & Errors\n\n{error_summary}\n\n"
+        f"## Session Diagnostics\n\n"
+        f"<details><summary>book.json (click to expand)</summary>\n\n"
+        f"```json\n{book_json}\n```\n\n</details>"
+    )
+
+    try:
+        resp = requests.post(
+            "https://api.github.com/repos/kody-w/rapp-installer/issues",
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={
+                "title": f"🆘 Help request — v{VERSION}",
+                "body": issue_body,
+                "labels": ["help-wanted"],
+            },
+            timeout=15,
+        )
+        if resp.status_code in (201, 200):
+            issue_data = resp.json()
+            issue_url = issue_data.get("html_url", "")
+            _tlog("diagnostics.report_created", {"issue_url": issue_url})
+            return jsonify({"status": "ok", "issue_url": issue_url})
+        else:
+            err = resp.text[:300]
+            _tlog("diagnostics.report_failed", {"status": resp.status_code, "error": err}, level="error")
+            return jsonify({"error": f"GitHub API returned {resp.status_code}: {err}"}), resp.status_code
+    except Exception as e:
+        _tlog("diagnostics.report_error", {"error": str(e)}, level="error")
+        return jsonify({"error": str(e)}), 500
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
