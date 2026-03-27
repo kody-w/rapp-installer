@@ -271,7 +271,8 @@ install_brainstem() {
             # 2. Pull latest from GitHub
             cd "$BRAINSTEM_HOME/src"
             git stash --quiet 2>/dev/null || true
-            git pull --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not pull${NC}"
+            git fetch origin --quiet 2>/dev/null
+            git pull --quiet 2>/dev/null || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
             echo -e "  ${GREEN}✓${NC} Framework updated"
 
             # 3. Restore user's local files (merge, don't overwrite)
@@ -587,6 +588,15 @@ with open(sys.argv[2], 'w') as f: json.dump(out, f)
     echo ""
 
     cd "$BRAINSTEM_HOME/src/rapp_brainstem"
+
+    # Kill any existing brainstem on port 7071 before starting
+    local existing_pid
+    existing_pid=$(lsof -ti:7071 2>/dev/null | head -1)
+    if [ -n "$existing_pid" ]; then
+        echo -e "  ${YELLOW}⚠${NC} Stopping existing server (PID $existing_pid)..."
+        kill "$existing_pid" 2>/dev/null
+        sleep 1
+    fi
 
     # Open the browser after a short delay
     (sleep 3 && (open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null)) &
