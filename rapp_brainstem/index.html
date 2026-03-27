@@ -94,6 +94,7 @@
     padding: 40px;
     text-align: center;
     max-width: 420px;
+    position: relative;
   }
   .login-card .login-icon {
     width: 56px; height: 56px;
@@ -573,6 +574,7 @@
 
 <div id="login-overlay" style="display:none">
   <div class="login-card">
+    <a href="#" onclick="dismissLogin(); return false;" style="position:absolute;top:12px;right:16px;color:#8b949e;font-size:18px;text-decoration:none;line-height:1" title="Dismiss">&times;</a>
     <div class="login-icon">
       <span class="icon icon-xl"><svg viewBox="0 0 24 24"><path d="M13 3C9.2 3 6.2 5.9 6 9.7L4.1 12.6c-.3.5.1 1.1.7 1.1H6v3c0 1.1.9 2 2 2h1v3h7v-4.9c2.8-1.5 5-4.8 5-8.1 0-5-4.5-8-8-5zM9.5 9C8.7 9 8 8.3 8 7.5S8.7 6 9.5 6s1.5.7 1.5 1.5S10.3 9 9.5 9zm5 0c-.8 0-1.5-.7-1.5-1.5S13.7 6 14.5 6s1.5.7 1.5 1.5S15.3 9 14.5 9z"/></svg></span>
     </div>
@@ -791,8 +793,10 @@
 
   // ── Health / Auth ──
   let loginInProgress = false;
+  let loginDismissed = false;
 
   function showLoginOverlay() {
+    loginDismissed = false;
     document.getElementById('login-step1').style.display = 'block';
     document.getElementById('login-step2').style.display = 'none';
     document.getElementById('login-step3').style.display = 'none';
@@ -800,6 +804,11 @@
     document.getElementById('login-overlay').style.display = 'flex';
     // Check if server has a pending device code we can resume
     resumePendingLogin();
+  }
+
+  function dismissLogin() {
+    loginDismissed = true;
+    hideLoginOverlay();
   }
 
   async function resumePendingLogin() {
@@ -850,7 +859,8 @@
         statusText.textContent = 'sign in';
         statusText.style.cursor = 'pointer';
         statusText.onclick = showLoginOverlay;
-        if (!localStorage.getItem('brainstem_auth') && !loginInProgress) {
+        // Only auto-show overlay on first visit, never if user dismissed it
+        if (!localStorage.getItem('brainstem_auth') && !loginInProgress && !loginDismissed) {
           showLoginOverlay();
         }
         // Fast poll while not connected
