@@ -3,12 +3,14 @@ set -e
 
 # RAPP Brainstem Installer
 # Usage: curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash
+# Pin a version: curl ... install.sh | bash -s -- --version v0.6.0
 
 BRAINSTEM_HOME="$HOME/.brainstem"
 BRAINSTEM_BIN="$HOME/.local/bin"
 VENV_DIR="$BRAINSTEM_HOME/venv"
 REPO_URL="https://github.com/kody-w/rapp-installer.git"
 REMOTE_VERSION_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
+PIN_VERSION=""
 
 # Colors
 RED='\033[0;31m'
@@ -246,15 +248,22 @@ install_brainstem() {
         # ── SMART UPDATE: preserve local files, upgrade framework ──
         local LOCAL_VER="0.0.0"
         [ -f "$LOCAL_VERSION_FILE" ] && LOCAL_VER=$(cat "$LOCAL_VERSION_FILE" 2>/dev/null || echo "0.0.0")
-        local REMOTE_VER=$(curl -sf "$REMOTE_VERSION_URL" 2>/dev/null || echo "0.0.0")
+
+        local TARGET_VER
+        if [ -n "$PIN_VERSION" ]; then
+            # Strip leading 'v' for comparison (v0.6.0 → 0.6.0)
+            TARGET_VER="${PIN_VERSION#v}"
+        else
+            TARGET_VER=$(curl -sf "$REMOTE_VERSION_URL" 2>/dev/null || echo "0.0.0")
+        fi
 
         echo "  Local:  v${LOCAL_VER}"
-        echo "  Remote: v${REMOTE_VER}"
+        echo "  Target: v${TARGET_VER}${PIN_VERSION:+ (pinned)}"
 
-        if [ "$LOCAL_VER" = "$REMOTE_VER" ]; then
-            echo -e "  ${GREEN}✓${NC} Already up to date (v${LOCAL_VER})"
+        if [ "$LOCAL_VER" = "$TARGET_VER" ]; then
+            echo -e "  ${GREEN}✓${NC} Already on v${LOCAL_VER}"
         else
-            echo "  Upgrading v${LOCAL_VER} → v${REMOTE_VER}..."
+            echo "  Switching v${LOCAL_VER} → v${TARGET_VER}..."
 
             # 1. Backup user's local files (soul, custom agents, .env)
             local BACKUP="/tmp/brainstem-upgrade-$$"
@@ -268,12 +277,24 @@ install_brainstem() {
             fi
             echo -e "  ${GREEN}✓${NC} Backed up soul, agents, config"
 
-            # 2. Pull latest from GitHub
+            # 2. Fetch and checkout target version
             cd "$BRAINSTEM_HOME/src"
             git stash --quiet 2>/dev/null || true
-            git fetch origin --quiet 2>/dev/null
-            git pull --quiet 2>/dev/null || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
-            echo -e "  ${GREEN}✓${NC} Framework updated"
+            git fetch origin --tags --quiet 2>/dev/null
+            if [ -n "$PIN_VERSION" ]; then
+                # Checkout the exact tagged version
+                if git rev-parse "$PIN_VERSION" >/dev/null 2>&1; then
+                    git checkout "$PIN_VERSION" --quiet 2>/dev/null
+                    echo -e "  ${GREEN}✓${NC} Checked out ${PIN_VERSION}"
+                else
+                    echo -e "  ${RED}✗${NC} Version ${PIN_VERSION} not found. Available versions:"
+                    git tag -l 'v*' | sort -V | sed 's/^/    /'
+                    exit 1
+                fi
+            else
+                git pull --quiet 2>/dev/null || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
+                echo -e "  ${GREEN}✓${NC} Framework updated"
+            fi
 
             # 3. Restore user's local files (merge, don't overwrite)
             [ -f "$BACKUP/soul.md" ] && cp "$BACKUP/soul.md" "$SOUL_FILE"
@@ -294,12 +315,24 @@ install_brainstem() {
 
             # 4. Clean up backup
             rm -rf "$BACKUP"
-            echo -e "  ${GREEN}✓${NC} Upgrade complete: v${LOCAL_VER} → v${REMOTE_VER}"
+            echo -e "  ${GREEN}✓${NC} ${PIN_VERSION:+Pinned to}${PIN_VERSION:-Upgrade complete:} v${TARGET_VER}"
         fi
     else
         echo "  Fresh install — cloning repository..."
         rm -rf "$BRAINSTEM_HOME/src" 2>/dev/null || true
         git clone --quiet "$REPO_URL" "$BRAINSTEM_HOME/src"
+        # If pinning, checkout the specific tag after clone
+        if [ -n "$PIN_VERSION" ]; then
+            cd "$BRAINSTEM_HOME/src"
+            if git rev-parse "$PIN_VERSION" >/dev/null 2>&1; then
+                git checkout "$PIN_VERSION" --quiet 2>/dev/null
+                echo -e "  ${GREEN}✓${NC} Checked out ${PIN_VERSION}"
+            else
+                echo -e "  ${RED}✗${NC} Version ${PIN_VERSION} not found. Available versions:"
+                git tag -l 'v*' | sort -V | sed 's/^/    /'
+                exit 1
+            fi
+        fi
     fi
     echo -e "  ${GREEN}✓${NC} Source code ready"
 }
@@ -618,10 +651,29 @@ with open(sys.argv[2], 'w') as f: json.dump(out, f)
 }
 
 main() {
+    # Parse arguments (e.g. --version v0.6.0)
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --version)
+                PIN_VERSION="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
     print_banner
 
+    if [ -n "$PIN_VERSION" ]; then
+        echo -e "  ${CYAN}Pinning to version: ${PIN_VERSION}${NC}"
+        echo ""
+    fi
+
     # Check if this is an upgrade of an existing install
-    if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
+    # Skip the shortcut when --version is specified (always go through install_brainstem)
+    if [ -z "$PIN_VERSION" ] && [ -d "$BRAINSTEM_HOME/src/.git" ]; then
         echo "Checking for updates..."
         if ! check_for_upgrade; then
             # Already up to date — still verify everything works before launching
@@ -659,4 +711,4 @@ main() {
     launch_brainstem
 }
 
-main
+main "$@"
