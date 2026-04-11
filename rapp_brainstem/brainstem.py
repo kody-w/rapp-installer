@@ -394,6 +394,7 @@ def get_copilot_token():
 
 _pending_login = {}
 _login_bg_thread = None
+_login_result = {}  # Written by bg poll thread, read by /login/poll endpoint
 _pending_login_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".copilot_pending")
 
 def _save_pending_login():
@@ -431,7 +432,7 @@ def start_device_code_login(force_new=False):
     Reuses an existing pending code if it hasn't expired (prevents refresh-kills-auth bug).
     Set force_new=True to always request a fresh code.
     """
-    global _pending_login, _login_bg_thread
+    global _pending_login, _login_bg_thread, _login_result, _copilot_token_cache
 
     # Reuse existing non-expired code (e.g. user refreshed the page)
     if not force_new and _pending_login and time.time() < _pending_login.get("expires_at", 0):
@@ -441,6 +442,15 @@ def start_device_code_login(force_new=False):
             "user_code": _pending_login["user_code"],
             "verification_uri": _pending_login["verification_uri"],
         }
+
+    # Clear stale state so the new flow starts completely clean
+    _login_result = {}
+    _copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
+    if os.path.exists(_copilot_cache_file):
+        try:
+            os.remove(_copilot_cache_file)
+        except Exception:
+            pass
 
     resp = requests.post(
         "https://github.com/login/device/code",
@@ -478,7 +488,13 @@ def _start_bg_poll():
     _login_bg_thread.start()
 
 def _bg_poll_loop():
-    """Background loop: polls GitHub for the device code token."""
+    """Background loop: polls GitHub for the device code token.
+
+    This is the SOLE caller of poll_device_code(). The /login/poll endpoint
+    reads _login_result instead of calling poll_device_code() directly,
+    which eliminates the race condition between bg thread and client poll.
+    """
+    global _login_result
     while _pending_login:
         interval = _pending_login.get("interval", 5)
         time.sleep(interval)
@@ -492,11 +508,19 @@ def _bg_poll_loop():
                 try:
                     get_copilot_token()
                     print("[brainstem] Copilot session established via background poll")
+                    _login_result = {"status": "ok", "message": "Authenticated with GitHub Copilot!"}
                 except Exception as e:
-                    print(f"[brainstem] Eager Copilot exchange deferred: {e}")
+                    err = str(e)
+                    if err.startswith("NO_COPILOT_ACCESS:"):
+                        print(f"[brainstem] Background poll: no Copilot access — {err}")
+                        _login_result = {"status": "error", "error": err}
+                    else:
+                        print(f"[brainstem] Eager Copilot exchange deferred: {e}")
+                        _login_result = {"status": "ok", "message": "Authenticated with GitHub Copilot!"}
                 break
         except RuntimeError as e:
             print(f"[brainstem] Background poll stopped: {e}")
+            _login_result = {"status": "error", "error": str(e)}
             break
         except Exception as e:
             print(f"[brainstem] Background poll error: {e}")
@@ -967,21 +991,28 @@ def login():
 
 @app.route("/login/poll", methods=["POST"])
 def login_poll():
-    """Poll for completed device code authorization."""
-    try:
-        token = poll_device_code()
-        if token:
-            # Eagerly exchange for Copilot token so health check shows ready immediately
-            try:
-                get_copilot_token()
-                print("[brainstem] Copilot session established after login")
-            except Exception as e:
-                print(f"[brainstem] Eager Copilot exchange deferred: {e}")
-                # Not fatal — will exchange on first /chat call
-            return jsonify({"status": "ok", "message": "Authenticated with GitHub Copilot!"})
-        return jsonify({"status": "pending"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    """Poll for completed device code authorization.
+
+    Reads _login_result (written by the bg poll thread) instead of calling
+    poll_device_code() directly. This eliminates the race where the bg thread
+    and client poll both compete for the same device code response.
+    """
+    # Check if bg thread has completed (or errored)
+    if _login_result:
+        result = _login_result.copy()
+        if result.get("status") == "error":
+            return jsonify(result)
+        return jsonify(result)
+
+    # Check if code has expired
+    if _pending_login and time.time() >= _pending_login.get("expires_at", 0):
+        return jsonify({"status": "expired", "error": "Login code expired. Please try again."})
+
+    # No pending login at all (e.g., server restarted, or flow was never started)
+    if not _pending_login:
+        return jsonify({"status": "expired", "error": "No login in progress. Please try again."})
+
+    return jsonify({"status": "pending"})
 
 @app.route("/login/status", methods=["GET"])
 def login_status():
@@ -998,12 +1029,13 @@ def login_status():
 @app.route("/login/switch", methods=["POST"])
 def login_switch():
     """Switch GitHub account — clears all cached tokens and starts fresh login."""
-    global _copilot_token_cache, _pending_login
+    global _copilot_token_cache, _pending_login, _login_result
     _tlog("auth.account_switch")
 
-    # Clear everything: memory caches, disk caches, pending login
+    # Clear everything: memory caches, disk caches, pending login, prior result
     _copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
     _pending_login = {}
+    _login_result = {}
     _save_pending_login()
 
     for f in (_token_file, _copilot_cache_file):

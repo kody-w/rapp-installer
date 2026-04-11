@@ -866,6 +866,8 @@
   // ── Health / Auth ──
   let loginInProgress = false;
   let loginDismissed = false;
+  let pollAttempts = 0;
+  const MAX_POLL_ATTEMPTS = 180;  // 15 min at 5s intervals (matches device code expiry)
 
   async function switchAccount() {
     clog('auth.switch_account');
@@ -886,6 +888,7 @@
       loginDismissed = false;
       copyDeviceCode();
       window.open(d.verification_uri, '_blank');
+      pollAttempts = 0;
       pollLogin();
     } catch (e) {
       alert('Failed to switch: ' + e.message);
@@ -920,6 +923,7 @@
         document.getElementById('verify-link').href = d.verification_uri;
         document.getElementById('login-status').textContent = 'Waiting for authorization...';
         loginInProgress = true;
+        pollAttempts = 0;
         pollLogin();
       }
     } catch { /* ignore — user can click Sign In manually */ }
@@ -1156,6 +1160,7 @@
       document.getElementById('verify-link').href = d.verification_uri;
       copyDeviceCode();
       window.open(d.verification_uri, '_blank');
+      pollAttempts = 0;
       pollLogin();
     } catch (e) {
       clog('login.start_failed', { error: e.message });
@@ -1166,13 +1171,37 @@
   }
 
   async function pollLogin() {
+    pollAttempts++;
+    if (pollAttempts > MAX_POLL_ATTEMPTS) {
+      clog('login.poll_timeout');
+      document.getElementById('login-status').innerHTML =
+        'Login timed out. <a href="#" onclick="startLogin(); return false;" style="color:#58a6ff">Try again</a>';
+      loginInProgress = false;
+      return;
+    }
     try {
       const r = await fetch(`${API}/login/poll`, { method: 'POST' });
       const d = await r.json();
-      if (d.error) {
-        clog('login.poll_error', { error: d.error });
+      if (d.status === 'error' || d.error) {
+        const err = d.error || '';
+        clog('login.poll_error', { error: err });
+        if (err.startsWith('NO_COPILOT_ACCESS:')) {
+          const username = err.split(':')[1] || 'this account';
+          document.getElementById('login-status').innerHTML =
+            '<strong>' + username + '</strong> doesn\'t have GitHub Copilot access. ' +
+            '<a href="#" onclick="switchAccount(); return false;" style="color:#58a6ff">Switch account</a> or ' +
+            '<a href="https://github.com/github-copilot/signup" target="_blank" style="color:#58a6ff">sign up for Copilot</a>.';
+        } else {
+          document.getElementById('login-status').innerHTML =
+            err + ' <a href="#" onclick="startLogin(); return false;" style="color:#58a6ff">Try again</a>';
+        }
+        loginInProgress = false;
+        return;
+      }
+      if (d.status === 'expired') {
+        clog('login.expired');
         document.getElementById('login-status').innerHTML =
-          d.error + ' <a href="#" onclick="startLogin(); return false;" style="color:#58a6ff">Try again</a>';
+          'Login code expired. <a href="#" onclick="startLogin(); return false;" style="color:#58a6ff">Try again</a>';
         loginInProgress = false;
         return;
       }
