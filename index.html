@@ -163,6 +163,18 @@
   .install-hint {
     padding: 0 24px 14px; font-size: 11px; color: #484f58; text-align: center;
   }
+  .install-download {
+    padding: 0 24px 16px; text-align: center;
+  }
+  .install-download a {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: #8b949e; text-decoration: none;
+    padding: 6px 14px; border: 1px solid #30363d; border-radius: 6px;
+    transition: all 0.15s;
+  }
+  .install-download a:hover {
+    color: #e6edf3; border-color: #58a6ff; background: #1f6feb1a;
+  }
 
   .status-bar {
     max-width: 620px; width: 100%; margin-top: 16px;
@@ -225,6 +237,9 @@
     </div>
   </div>
   <div class="install-hint" id="install-hint">Works on macOS &amp; Linux. Auto-installs Python 3.11 if missing.</div>
+  <div class="install-download" id="install-download">
+    <a id="download-link" href="install.command" download>⬇ Download installer</a>
+  </div>
 </div>
 
 <div class="tiers">
@@ -401,6 +416,11 @@
   let currentOS = navigator.platform.includes('Win') ? 'Windows' : 'macOS/Linux';
   let currentTab = 'one-liner';
 
+  const downloads = {
+    'macOS/Linux': { href: 'install.command', label: '⬇ Download installer (.command)' },
+    'Windows':     { href: 'install.cmd',     label: '⬇ Download installer (.cmd)' }
+  };
+
   function renderInstall() {
     const data = installs[currentOS][currentTab];
     document.getElementById('os-label').textContent = currentOS;
@@ -408,6 +428,16 @@
     document.getElementById('install-cmd').textContent = data.cmd;
     document.getElementById('install-hint').innerHTML = data.hint;
     document.getElementById('copy-icon').textContent = '📋';
+    const dlDiv = document.getElementById('install-download');
+    if (currentTab === 'one-liner') {
+      const dl = downloads[currentOS];
+      const link = document.getElementById('download-link');
+      link.href = dl.href;
+      link.textContent = dl.label;
+      dlDiv.style.display = '';
+    } else {
+      dlDiv.style.display = 'none';
+    }
   }
 
   function flipOS() {
