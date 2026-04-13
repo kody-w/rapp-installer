@@ -121,7 +121,7 @@ def build_flow_json():
                     "manual": {
                         "metadata": {"operationMetadataId": guid()},
                         "type": "Request",
-                        "kind": "PowerVirtualAgents",
+                        "kind": "Skills",
                         "inputs": {
                             "schema": {
                                 "type": "object",
@@ -193,7 +193,7 @@ def build_flow_json():
                                 "runAfter": {"Send_report_email": ["Succeeded"]},
                                 "metadata": {"operationMetadataId": guid()},
                                 "type": "Response",
-                                "kind": "PowerVirtualAgents",
+                                "kind": "Skills",
                                 "inputs": {
                                     "statusCode": 200,
                                     "body": {
@@ -237,7 +237,7 @@ def build_flow_json():
                                     "runAfter": {"Send_no_data_email": ["Succeeded"]},
                                     "metadata": {"operationMetadataId": guid()},
                                     "type": "Response",
-                                    "kind": "PowerVirtualAgents",
+                                    "kind": "Skills",
                                     "inputs": {
                                         "statusCode": 200,
                                         "body": {
