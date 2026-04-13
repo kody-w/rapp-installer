@@ -1,0 +1,72 @@
+{
+  "name": "flow_generate_report",
+  "displayName": "Generate and Send Daily Report Flow",
+  "description": "End-to-end: reads Excel data, formats report, sends via Outlook",
+  "trigger": {
+    "kind": "PowerVirtualAgents",
+    "inputs": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "actions": [
+    {
+      "kind": "ExcelOnline_GetRows",
+      "connector": "shared_excelonlinebusiness",
+      "inputs": {
+        "source": "OneDrive for Business",
+        "drive": "${env:EXCEL_DRIVE_ID}",
+        "file": "${env:EXCEL_WORKBOOK_ID}",
+        "table": "SalesData"
+      },
+      "outputs": {
+        "rows": "salesRows"
+      }
+    },
+    {
+      "kind": "Condition",
+      "expression": "@greater(length(body('ExcelOnline_GetRows')?['value']), 0)",
+      "ifTrue": [
+        {
+          "kind": "Compose",
+          "description": "Format HTML report from sales data",
+          "inputs": "@concat('<h2>Daily Sales Report</h2><p>Total rows: ', string(length(body('ExcelOnline_GetRows')?['value'])), '</p>')"
+        },
+        {
+          "kind": "Office365Outlook_SendEmail",
+          "connector": "shared_office365",
+          "inputs": {
+            "to": "${env:REPORT_RECIPIENT}",
+            "subject": "Daily Sales Report - @{utcNow('yyyy-MM-dd')}",
+            "body": "@outputs('Compose')",
+            "importance": "Normal"
+          }
+        },
+        {
+          "kind": "Response",
+          "inputs": {
+            "result": "Report generated and sent successfully"
+          }
+        }
+      ],
+      "ifFalse": [
+        {
+          "kind": "Office365Outlook_SendEmail",
+          "connector": "shared_office365",
+          "inputs": {
+            "to": "${env:REPORT_RECIPIENT}",
+            "subject": "Daily Sales Report - No Data - @{utcNow('yyyy-MM-dd')}",
+            "body": "<p>No sales data available for today.</p>",
+            "importance": "Low"
+          }
+        },
+        {
+          "kind": "Response",
+          "inputs": {
+            "result": "No data found. Notification email sent."
+          }
+        }
+      ]
+    }
+  ]
+}

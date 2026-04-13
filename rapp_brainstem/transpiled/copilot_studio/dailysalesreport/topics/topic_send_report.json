@@ -1,0 +1,31 @@
+{
+  "kind": "AdaptiveDialog",
+  "id": "topic_send_report",
+  "displayName": "Send Report",
+  "triggers": [
+    {
+      "kind": "OnRecognizedIntent",
+      "intent": "send_report",
+      "triggerQueries": [
+        "send the report",
+        "email the summary",
+        "send sales report",
+        "email the daily report",
+        "send it out"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "kind": "InvokeFlowAction",
+      "flowId": "flow_send_outlook",
+      "outputs": {
+        "result": "sendResult"
+      }
+    },
+    {
+      "kind": "SendMessage",
+      "message": "${Topic.flowResult}"
+    }
+  ]
+}

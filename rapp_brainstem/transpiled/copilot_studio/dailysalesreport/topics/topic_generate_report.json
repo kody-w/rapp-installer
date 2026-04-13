@@ -1,0 +1,37 @@
+{
+  "kind": "AdaptiveDialog",
+  "id": "topic_generate_report",
+  "displayName": "Generate Report",
+  "triggers": [
+    {
+      "kind": "OnRecognizedIntent",
+      "intent": "generate_report",
+      "triggerQueries": [
+        "generate daily report",
+        "run daily sales report",
+        "create and send report",
+        "daily sales summary"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "kind": "InvokeFlowAction",
+      "flowId": "flow_read_excel",
+      "outputs": {
+        "result": "excelData"
+      }
+    },
+    {
+      "kind": "InvokeFlowAction",
+      "flowId": "flow_send_outlook",
+      "outputs": {
+        "result": "sendResult"
+      }
+    },
+    {
+      "kind": "SendMessage",
+      "message": "${Topic.flowResult}"
+    }
+  ]
+}

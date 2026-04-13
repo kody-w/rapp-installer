@@ -447,11 +447,83 @@ class N8nAssimilatorAgent(BasicAgent):
         var = _to_snake(node["name"])
         name_comment = f"# --- {node['name']} ({short}) ---"
 
+        # Skip UI-only nodes
+        if short == "stickyNote":
+            return [name_comment, "pass  # sticky note (UI annotation, skipped)"]
+
         if short in _TRIGGER_TYPES:
             return [
                 name_comment,
                 "# Trigger entry point — input comes from perform() kwargs",
                 f"_{var}_input = data",
+            ]
+
+        # --- Google Sheets → Microsoft Graph Excel ---
+        if short == "googleSheets":
+            operation = params.get("operation", "read")
+            sheet_name = params.get("sheetName", "Sheet1")
+            range_val = params.get("range", "A:Z")
+            if operation in ("read", "getAll", ""):
+                return [
+                    name_comment,
+                    "# Google Sheets → Microsoft Graph Excel (read)",
+                    f"# Original sheet: {sheet_name}, range: {range_val}",
+                    f'_{var}_drive_id = os.environ.get("EXCEL_DRIVE_ID", "")',
+                    f'_{var}_workbook_id = os.environ.get("EXCEL_WORKBOOK_ID", "")',
+                    f"_{var}_sheet = {sheet_name!r}",
+                    f"_{var}_range = {range_val!r}",
+                    f'_{var}_url = f"https://graph.microsoft.com/v1.0/drives/{{_{var}_drive_id}}/items/{{_{var}_workbook_id}}/workbook/worksheets/{{_{var}_sheet}}/range(address=\'{{_{var}_range}}\')"',
+                    f'_{var}_req = urllib.request.Request(_{var}_url)',
+                    f'_{var}_token = os.environ.get("GRAPH_ACCESS_TOKEN", "")',
+                    f'_{var}_req.add_header("Authorization", f"Bearer {{_{var}_token}}")',
+                    f'_{var}_req.add_header("Content-Type", "application/json")',
+                    "try:",
+                    f"    with urllib.request.urlopen(_{var}_req, timeout=30) as _resp:",
+                    f'        _{var}_data = json.loads(_resp.read().decode("utf-8"))',
+                    f'    _{var}_rows = _{var}_data.get("values", [])',
+                    "except Exception as _err:",
+                    f'    _{var}_rows = []',
+                    f'    _{var}_data = {{"error": str(_err)}}',
+                ]
+            else:
+                return [
+                    name_comment,
+                    f"# Google Sheets → Microsoft Graph Excel ({operation})",
+                    f"# Original sheet: {sheet_name}",
+                    f'_{var}_drive_id = os.environ.get("EXCEL_DRIVE_ID", "")',
+                    f'_{var}_workbook_id = os.environ.get("EXCEL_WORKBOOK_ID", "")',
+                    f'_{var}_url = f"https://graph.microsoft.com/v1.0/drives/{{_{var}_drive_id}}/items/{{_{var}_workbook_id}}/workbook/worksheets/{sheet_name}/range(address=\'A:Z\')"',
+                    f"_{var}_data = {{}}  # TODO: implement {operation} via Graph API",
+                ]
+
+        # --- Email Send → Microsoft Graph Outlook ---
+        if short in ("emailSend", "gmail", "microsoftOutlook"):
+            to_addr = params.get("toEmail", params.get("to", ""))
+            subject = params.get("subject", "")
+            body_field = params.get("body", params.get("text", ""))
+            return [
+                name_comment,
+                "# Email Send → Microsoft Graph Outlook",
+                f'_{var}_to = {to_addr!r} or data.get("to", "")',
+                f'_{var}_subject = {subject!r} or data.get("subject", "Report")',
+                f'_{var}_body = {body_field!r} or data.get("body", "")',
+                f'_{var}_token = os.environ.get("GRAPH_ACCESS_TOKEN", "")',
+                f'_{var}_url = "https://graph.microsoft.com/v1.0/me/sendMail"',
+                f"_{var}_payload = json.dumps({{",
+                f'    "message": {{',
+                f'        "subject": _{var}_subject,',
+                f'        "body": {{"contentType": "HTML", "content": _{var}_body}},',
+                f'        "toRecipients": [{{"emailAddress": {{"address": _{var}_to}}}}]',
+                f"    }}",
+                f"}})",
+                f'_{var}_req = urllib.request.Request(_{var}_url, data=_{var}_payload.encode("utf-8"), method="POST")',
+                f'_{var}_req.add_header("Authorization", f"Bearer {{_{var}_token}}")',
+                f'_{var}_req.add_header("Content-Type", "application/json")',
+                "try:",
+                f"    with urllib.request.urlopen(_{var}_req, timeout=30) as _resp:",
+                f'        _{var}_result = {{"status": "sent", "code": _resp.status}}',
+                "except Exception as _err:",
+                f'    _{var}_result = {{"status": "failed", "error": str(_err)}}',
             ]
 
         if short == "httpRequest":
@@ -639,6 +711,7 @@ class N8nAssimilatorAgent(BasicAgent):
             '"""',
             "",
             "import json",
+            "import os",
             "import urllib.request",
             "",
             "try:",
@@ -826,6 +899,10 @@ class N8nAssimilatorAgent(BasicAgent):
             info["external_calls"].append("salesforce")
         if re.search(r"openai|ChatCompletion", source, re.I):
             info["external_calls"].append("azure_openai")
+        if re.search(r"graph\.microsoft\.com.*workbook|EXCEL_DRIVE_ID|EXCEL_WORKBOOK_ID", source):
+            info["external_calls"].append("excel_online")
+        if re.search(r"graph\.microsoft\.com.*sendMail|graph\.microsoft\.com.*me/messages", source):
+            info["external_calls"].append("outlook")
 
         return info
 
@@ -876,8 +953,33 @@ class N8nAssimilatorAgent(BasicAgent):
         name = agent_info.get("name", "Agent")
         description = agent_info.get("description", "")
         actions = agent_info.get("actions", [])
+        ext_calls = agent_info.get("external_calls", [])
+        has_excel = "excel_online" in ext_calls
+        has_outlook = "outlook" in ext_calls
+        has_flows = bool(actions) or has_excel or has_outlook
 
         solution = {}
+
+        # Connector mapping
+        connectors = {}
+        if has_excel:
+            connectors["excel_online"] = {
+                "connectorId": "shared_excelonlinebusiness",
+                "displayName": "Excel Online (Business)",
+                "authType": "OAuth2",
+            }
+        if has_outlook:
+            connectors["outlook"] = {
+                "connectorId": "shared_office365",
+                "displayName": "Office 365 Outlook",
+                "authType": "OAuth2",
+            }
+        if "salesforce" in ext_calls:
+            connectors["salesforce"] = {
+                "connectorId": "shared_salesforce",
+                "displayName": "Salesforce",
+                "authType": "OAuth2",
+            }
 
         # 1. Agent manifest
         solution["agent_manifest.json"] = {
@@ -891,8 +993,9 @@ class N8nAssimilatorAgent(BasicAgent):
             "primaryLanguage": "en-US",
             "topics": [f"topic_{a}" for a in actions] if actions else ["topic_main"],
             "capabilities": {
-                "generativeAnswers": "azure_openai" in agent_info.get("external_calls", []),
-                "powerAutomateFlows": bool(actions),
+                "generativeAnswers": "azure_openai" in ext_calls,
+                "powerAutomateFlows": has_flows,
+                "connectors": list(connectors.keys()),
             },
             "metadata": {
                 "source": "N8nAssimilator Transpiler",
@@ -901,61 +1004,229 @@ class N8nAssimilatorAgent(BasicAgent):
             },
         }
 
-        # 2. Topics
+        # 2. Topics — build around actual workflow capabilities
+        topic_list = []
+
+        if has_excel:
+            topic_list.append(("read_data", "Read Data", [
+                "get sales data", "read spreadsheet", "show me the data",
+                "pull the report data", "get today's numbers",
+            ]))
+        if has_outlook:
+            topic_list.append(("send_report", "Send Report", [
+                "send the report", "email the summary", "send sales report",
+                "email the daily report", "send it out",
+            ]))
+        if has_excel and has_outlook:
+            topic_list.append(("generate_report", "Generate Report", [
+                "generate daily report", "run daily sales report",
+                "create and send report", "daily sales summary",
+            ]))
+
         if actions:
             for action_name in actions:
-                topic_id = f"topic_{action_name}"
-                trigger_phrases = [
+                topic_list.append((action_name, action_name.replace("_", " ").title(), [
                     action_name.replace("_", " "),
                     f"run {action_name.replace('_', ' ')}",
                     f"execute {action_name.replace('_', ' ')}",
-                ]
-                solution[f"{topic_id}.json"] = {
-                    "kind": "AdaptiveDialog",
-                    "id": topic_id,
-                    "displayName": action_name.replace("_", " ").title(),
-                    "triggers": [
-                        {
-                            "kind": "OnRecognizedIntent",
-                            "intent": action_name,
-                            "triggerQueries": trigger_phrases,
-                        }
-                    ],
-                    "actions": [
-                        {
-                            "kind": "InvokeFlowAction",
-                            "flowId": f"flow_{action_name}",
-                        },
-                        {
-                            "kind": "SendMessage",
-                            "message": "${flowResult}",
-                        },
-                    ],
-                }
-        else:
-            solution["topic_main.json"] = {
+                ]))
+
+        if not topic_list:
+            topic_list.append(("main", "Main", ["help", "start", name.lower()]))
+
+        for topic_id, display_name, trigger_phrases in topic_list:
+            flow_actions = []
+            if topic_id in ("read_data", "generate_report") and has_excel:
+                flow_actions.append({
+                    "kind": "InvokeFlowAction",
+                    "flowId": "flow_read_excel",
+                    "outputs": {"result": "excelData"},
+                })
+            if topic_id in ("send_report", "generate_report") and has_outlook:
+                flow_actions.append({
+                    "kind": "InvokeFlowAction",
+                    "flowId": "flow_send_outlook",
+                    "outputs": {"result": "sendResult"},
+                })
+            if not flow_actions:
+                flow_actions.append({
+                    "kind": "InvokeFlowAction",
+                    "flowId": f"flow_{topic_id}",
+                })
+
+            flow_actions.append({
+                "kind": "SendMessage",
+                "message": "${Topic.flowResult}",
+            })
+
+            solution[f"topic_{topic_id}.json"] = {
                 "kind": "AdaptiveDialog",
-                "id": "topic_main",
-                "displayName": "Main",
-                "triggers": [
-                    {
-                        "kind": "OnRecognizedIntent",
-                        "intent": "main",
-                        "triggerQueries": ["help", "start", name.lower()],
-                    }
-                ],
+                "id": f"topic_{topic_id}",
+                "displayName": display_name,
+                "triggers": [{
+                    "kind": "OnRecognizedIntent",
+                    "intent": topic_id,
+                    "triggerQueries": trigger_phrases,
+                }],
+                "actions": flow_actions,
+            }
+
+        # 3. Power Automate Flows — real connector-based flows
+        if has_excel:
+            solution["flow_read_excel.json"] = {
+                "name": "flow_read_excel",
+                "displayName": "Read Excel Data Flow",
+                "description": "Reads sales data from Excel Online via Microsoft Graph",
+                "trigger": {
+                    "kind": "PowerVirtualAgents",
+                    "inputs": {"type": "object", "properties": {}},
+                },
                 "actions": [
                     {
-                        "kind": "GenerativeAnswer",
-                        "prompt": f"Help the user with {name}",
-                    }
+                        "kind": "ExcelOnline_GetRows",
+                        "connector": "shared_excelonlinebusiness",
+                        "inputs": {
+                            "source": "OneDrive for Business",
+                            "drive": "${env:EXCEL_DRIVE_ID}",
+                            "file": "${env:EXCEL_WORKBOOK_ID}",
+                            "table": "SalesData",
+                        },
+                        "outputs": {"rows": "salesRows"},
+                    },
+                    {
+                        "kind": "Compose",
+                        "inputs": {
+                            "expression": "length(body('ExcelOnline_GetRows')?['value'])",
+                        },
+                        "outputs": {"rowCount": "dataCount"},
+                    },
+                    {
+                        "kind": "Condition",
+                        "expression": "@greater(outputs('dataCount'), 0)",
+                        "ifTrue": [
+                            {
+                                "kind": "Compose",
+                                "inputs": "Data found: @{outputs('dataCount')} rows",
+                            }
+                        ],
+                        "ifFalse": [
+                            {
+                                "kind": "Compose",
+                                "inputs": "No sales data found for today.",
+                            }
+                        ],
+                    },
+                    {
+                        "kind": "Response",
+                        "inputs": {"result": "@{outputs('Compose')}"},
+                    },
                 ],
             }
 
-        # 3. Flows
-        if actions:
-            for action_name in actions:
-                solution[f"flow_{action_name}.json"] = {
+        if has_outlook:
+            solution["flow_send_outlook.json"] = {
+                "name": "flow_send_outlook",
+                "displayName": "Send Report via Outlook Flow",
+                "description": "Sends formatted sales report email via Office 365 Outlook",
+                "trigger": {
+                    "kind": "PowerVirtualAgents",
+                    "inputs": {
+                        "type": "object",
+                        "properties": {
+                            "reportBody": {"type": "string", "description": "HTML report content"},
+                            "recipientEmail": {"type": "string", "description": "Email recipient"},
+                        },
+                    },
+                },
+                "actions": [
+                    {
+                        "kind": "Office365Outlook_SendEmail",
+                        "connector": "shared_office365",
+                        "inputs": {
+                            "to": "@triggerBody()?['recipientEmail']",
+                            "subject": "Daily Sales Report - @{utcNow('yyyy-MM-dd')}",
+                            "body": "@triggerBody()?['reportBody']",
+                            "importance": "Normal",
+                        },
+                        "outputs": {"sendResult": "emailSent"},
+                    },
+                    {
+                        "kind": "Response",
+                        "inputs": {"result": "Email sent successfully"},
+                    },
+                ],
+            }
+
+        if has_excel and has_outlook:
+            solution["flow_generate_report.json"] = {
+                "name": "flow_generate_report",
+                "displayName": "Generate and Send Daily Report Flow",
+                "description": "End-to-end: reads Excel data, formats report, sends via Outlook",
+                "trigger": {
+                    "kind": "PowerVirtualAgents",
+                    "inputs": {"type": "object", "properties": {}},
+                },
+                "actions": [
+                    {
+                        "kind": "ExcelOnline_GetRows",
+                        "connector": "shared_excelonlinebusiness",
+                        "inputs": {
+                            "source": "OneDrive for Business",
+                            "drive": "${env:EXCEL_DRIVE_ID}",
+                            "file": "${env:EXCEL_WORKBOOK_ID}",
+                            "table": "SalesData",
+                        },
+                        "outputs": {"rows": "salesRows"},
+                    },
+                    {
+                        "kind": "Condition",
+                        "expression": "@greater(length(body('ExcelOnline_GetRows')?['value']), 0)",
+                        "ifTrue": [
+                            {
+                                "kind": "Compose",
+                                "description": "Format HTML report from sales data",
+                                "inputs": "@concat('<h2>Daily Sales Report</h2><p>Total rows: ', string(length(body('ExcelOnline_GetRows')?['value'])), '</p>')",
+                            },
+                            {
+                                "kind": "Office365Outlook_SendEmail",
+                                "connector": "shared_office365",
+                                "inputs": {
+                                    "to": "${env:REPORT_RECIPIENT}",
+                                    "subject": "Daily Sales Report - @{utcNow('yyyy-MM-dd')}",
+                                    "body": "@outputs('Compose')",
+                                    "importance": "Normal",
+                                },
+                            },
+                            {
+                                "kind": "Response",
+                                "inputs": {"result": "Report generated and sent successfully"},
+                            },
+                        ],
+                        "ifFalse": [
+                            {
+                                "kind": "Office365Outlook_SendEmail",
+                                "connector": "shared_office365",
+                                "inputs": {
+                                    "to": "${env:REPORT_RECIPIENT}",
+                                    "subject": "Daily Sales Report - No Data - @{utcNow('yyyy-MM-dd')}",
+                                    "body": "<p>No sales data available for today.</p>",
+                                    "importance": "Low",
+                                },
+                            },
+                            {
+                                "kind": "Response",
+                                "inputs": {"result": "No data found. Notification email sent."},
+                            },
+                        ],
+                    },
+                ],
+            }
+
+        # Generic flows for explicit actions (if any)
+        for action_name in actions:
+            fkey = f"flow_{action_name}.json"
+            if fkey not in solution:
+                solution[fkey] = {
                     "name": f"flow_{action_name}",
                     "displayName": f"{action_name.replace('_', ' ').title()} Flow",
                     "trigger": {
@@ -963,14 +1234,18 @@ class N8nAssimilatorAgent(BasicAgent):
                         "inputs": {"action": action_name},
                     },
                     "actions": [
-                        {
-                            "kind": "Response",
-                            "inputs": {"result": f"Executed {action_name}"},
-                        }
+                        {"kind": "Response", "inputs": {"result": f"Executed {action_name}"}},
                     ],
                 }
 
-        # 4. Deployment guide
+        # 4. Connectors config
+        if connectors:
+            solution["connectors.json"] = {
+                "connectors": connectors,
+                "instructions": "Configure each connector in Power Platform admin center before importing.",
+            }
+
+        # 5. Deployment guide
         solution["DEPLOYMENT_GUIDE.md"] = self._generate_deployment_guide(
             name, agent_info
         )

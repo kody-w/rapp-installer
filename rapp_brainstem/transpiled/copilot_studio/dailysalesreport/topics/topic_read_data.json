@@ -1,0 +1,31 @@
+{
+  "kind": "AdaptiveDialog",
+  "id": "topic_read_data",
+  "displayName": "Read Data",
+  "triggers": [
+    {
+      "kind": "OnRecognizedIntent",
+      "intent": "read_data",
+      "triggerQueries": [
+        "get sales data",
+        "read spreadsheet",
+        "show me the data",
+        "pull the report data",
+        "get today's numbers"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "kind": "InvokeFlowAction",
+      "flowId": "flow_read_excel",
+      "outputs": {
+        "result": "excelData"
+      }
+    },
+    {
+      "kind": "SendMessage",
+      "message": "${Topic.flowResult}"
+    }
+  ]
+}

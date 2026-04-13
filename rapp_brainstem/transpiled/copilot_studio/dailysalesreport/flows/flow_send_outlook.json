@@ -1,0 +1,42 @@
+{
+  "name": "flow_send_outlook",
+  "displayName": "Send Report via Outlook Flow",
+  "description": "Sends formatted sales report email via Office 365 Outlook",
+  "trigger": {
+    "kind": "PowerVirtualAgents",
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "reportBody": {
+          "type": "string",
+          "description": "HTML report content"
+        },
+        "recipientEmail": {
+          "type": "string",
+          "description": "Email recipient"
+        }
+      }
+    }
+  },
+  "actions": [
+    {
+      "kind": "Office365Outlook_SendEmail",
+      "connector": "shared_office365",
+      "inputs": {
+        "to": "@triggerBody()?['recipientEmail']",
+        "subject": "Daily Sales Report - @{utcNow('yyyy-MM-dd')}",
+        "body": "@triggerBody()?['reportBody']",
+        "importance": "Normal"
+      },
+      "outputs": {
+        "sendResult": "emailSent"
+      }
+    },
+    {
+      "kind": "Response",
+      "inputs": {
+        "result": "Email sent successfully"
+      }
+    }
+  ]
+}

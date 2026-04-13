@@ -1,0 +1,58 @@
+{
+  "name": "flow_read_excel",
+  "displayName": "Read Excel Data Flow",
+  "description": "Reads sales data from Excel Online via Microsoft Graph",
+  "trigger": {
+    "kind": "PowerVirtualAgents",
+    "inputs": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "actions": [
+    {
+      "kind": "ExcelOnline_GetRows",
+      "connector": "shared_excelonlinebusiness",
+      "inputs": {
+        "source": "OneDrive for Business",
+        "drive": "${env:EXCEL_DRIVE_ID}",
+        "file": "${env:EXCEL_WORKBOOK_ID}",
+        "table": "SalesData"
+      },
+      "outputs": {
+        "rows": "salesRows"
+      }
+    },
+    {
+      "kind": "Compose",
+      "inputs": {
+        "expression": "length(body('ExcelOnline_GetRows')?['value'])"
+      },
+      "outputs": {
+        "rowCount": "dataCount"
+      }
+    },
+    {
+      "kind": "Condition",
+      "expression": "@greater(outputs('dataCount'), 0)",
+      "ifTrue": [
+        {
+          "kind": "Compose",
+          "inputs": "Data found: @{outputs('dataCount')} rows"
+        }
+      ],
+      "ifFalse": [
+        {
+          "kind": "Compose",
+          "inputs": "No sales data found for today."
+        }
+      ]
+    },
+    {
+      "kind": "Response",
+      "inputs": {
+        "result": "@{outputs('Compose')}"
+      }
+    }
+  ]
+}

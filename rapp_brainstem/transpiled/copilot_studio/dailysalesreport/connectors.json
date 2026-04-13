@@ -1,0 +1,15 @@
+{
+  "connectors": {
+    "excel_online": {
+      "connectorId": "shared_excelonlinebusiness",
+      "displayName": "Excel Online (Business)",
+      "authType": "OAuth2"
+    },
+    "outlook": {
+      "connectorId": "shared_office365",
+      "displayName": "Office 365 Outlook",
+      "authType": "OAuth2"
+    }
+  },
+  "instructions": "Configure each connector in Power Platform admin center before importing."
+}

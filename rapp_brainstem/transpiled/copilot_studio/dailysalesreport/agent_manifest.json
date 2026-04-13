@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Dailysalesreport",
+  "displayName": "Dailysalesreport",
+  "description": "Auto-generated from n8n workflow ",
+  "instructions": "You are Dailysalesreport. Auto-generated from n8n workflow ",
+  "primaryLanguage": "en-US",
+  "topics": [
+    "topic_main"
+  ],
+  "capabilities": {
+    "generativeAnswers": false,
+    "powerAutomateFlows": true,
+    "connectors": [
+      "excel_online",
+      "outlook"
+    ]
+  },
+  "metadata": {
+    "source": "N8nAssimilator Transpiler",
+    "transpiled_at": "2026-04-13T18:33:25.630699+00:00",
+    "original_class": "DailysalesreportAgent"
+  }
+}
