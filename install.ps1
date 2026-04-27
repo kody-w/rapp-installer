@@ -21,15 +21,69 @@ function Print-Banner {
 
 function Compare-SemVer {
     param([string]$Local, [string]$Remote)
-    $lParts = $Local.Split('.')
-    $rParts = $Remote.Split('.')
+    # Strip pre-release suffix ("0.6.1-preview1" -> "0.6.1") so [int] cast doesn't throw.
+    $lBase = $Local -replace '-.*$',''
+    $rBase = $Remote -replace '-.*$',''
+    $lParts = $lBase.Split('.')
+    $rParts = $rBase.Split('.')
     for ($i = 0; $i -lt [Math]::Max($lParts.Length, $rParts.Length); $i++) {
         $lv = if ($i -lt $lParts.Length) { [int]$lParts[$i] } else { 0 }
         $rv = if ($i -lt $rParts.Length) { [int]$rParts[$i] } else { 0 }
         if ($rv -gt $lv) { return 1 }   # remote is newer
         if ($rv -lt $lv) { return -1 }  # local is newer
     }
-    return 0  # equal
+    # Bases equal — handle suffix tiebreak (suffix < no suffix; otherwise string compare).
+    if ($Local -eq $Remote) { return 0 }
+    if (($Local -match '-') -and ($Remote -notmatch '-')) { return 1 }    # remote (clean) is newer
+    if (($Remote -match '-') -and ($Local -notmatch '-')) { return -1 }   # local (clean) is newer
+    if ($Remote -gt $Local) { return 1 }
+    if ($Remote -lt $Local) { return -1 }
+    return 0
+}
+
+function Get-ChannelStamp {
+    param([string]$OriginUrl, [string]$Branch)
+    if (-not $OriginUrl -or -not $Branch) { return $null }
+    $slug = $OriginUrl -replace 'https?://github\.com/','' -replace '\.git$',''
+    $slug = $slug -replace '[^A-Za-z0-9_.-]','-'
+    $branchSlug = $Branch -replace '[^A-Za-z0-9_.-]','-'
+    return "${slug}__${branchSlug}"
+}
+
+function Get-CurrentChannelStamp {
+    $srcDir = "$BRAINSTEM_HOME\src"
+    if (-not (Test-Path "$srcDir\.git")) { return $null }
+    Push-Location $srcDir
+    $origin = ""; $branch = ""
+    try { $origin = "$(git remote get-url origin 2>$null)".Trim() } catch {}
+    try { $branch = "$(git rev-parse --abbrev-ref HEAD 2>$null)".Trim() } catch {}
+    Pop-Location
+    return Get-ChannelStamp -OriginUrl $origin -Branch $branch
+}
+
+function Stash-CurrentInstall {
+    # Move ~/.brainstem/src to ~/.brainstem/versions/<stamp>/ so it can be restored later.
+    # Local-first: nothing leaves the machine; restoration is a directory move.
+    $srcDir = "$BRAINSTEM_HOME\src"
+    if (-not (Test-Path "$srcDir\.git")) { return }
+    $stamp = Get-CurrentChannelStamp
+    if (-not $stamp) { $stamp = "unidentified-$(Get-Date -Format 'yyyyMMdd-HHmmss')" }
+    $versionsDir = "$BRAINSTEM_HOME\versions"
+    if (-not (Test-Path $versionsDir)) { New-Item -ItemType Directory -Force -Path $versionsDir | Out-Null }
+    $target = "$versionsDir\$stamp"
+    if (Test-Path $target) { Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue }
+    Move-Item $srcDir $target -Force
+    Write-Host "  [OK] Stashed prior install -> versions\$stamp" -ForegroundColor Green
+}
+
+function Restore-FromVersions {
+    param([string]$Stamp)
+    if (-not $Stamp) { return $false }
+    $candidate = "$BRAINSTEM_HOME\versions\$Stamp"
+    if (-not (Test-Path "$candidate\.git")) { return $false }
+    Move-Item $candidate "$BRAINSTEM_HOME\src" -Force
+    Write-Host "  [OK] Restored from versions\$Stamp" -ForegroundColor Green
+    return $true
 }
 
 function Check-ForUpgrade {
@@ -50,15 +104,8 @@ function Check-ForUpgrade {
     $expectedUrl = $REPO_URL.TrimEnd('.git')
     $actualUrl = $originUrl.TrimEnd('.git')
     if ($actualUrl -and ($actualUrl -ne $expectedUrl)) {
-        Write-Host ""
-        Write-Host "  [X] Existing install at $repoDir points to a different repo:" -ForegroundColor Red
-        Write-Host "      origin:   $originUrl" -ForegroundColor Red
-        Write-Host "      expected: $REPO_URL" -ForegroundColor Red
-        Write-Host ""
-        Write-Host "  Move it aside or remove it, then re-run:" -ForegroundColor Yellow
-        Write-Host "    Remove-Item -Recurse -Force `"$BRAINSTEM_HOME`"" -ForegroundColor Yellow
-        Write-Host ""
-        exit 1
+        Write-Host "  [..] Different upstream on disk ($actualUrl); will stash and switch." -ForegroundColor Yellow
+        return $true
     }
 
     if ($currentBranch -and ($currentBranch -ne $REPO_BRANCH)) {
@@ -245,70 +292,75 @@ function Install-Brainstem {
         New-Item -ItemType Directory -Force -Path $BRAINSTEM_HOME | Out-Null
     }
 
+    $desiredStamp = Get-ChannelStamp -OriginUrl $REPO_URL -Branch $REPO_BRANCH
+
+    # If src/ exists and is on a different channel, stash it so it's restorable later.
     if (Test-Path "$BRAINSTEM_HOME\src\.git") {
-        # Smart update — preserve soul, agents, config
-        $LocalVer = "0.0.0"
-        $VerFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
-        if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw -Encoding utf8).Trim() }
-        try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
-
-        # Detect channel mismatch — force upgrade path even if versions match
-        Push-Location "$BRAINSTEM_HOME\src"
-        $currentBranch = ""
-        try { $currentBranch = "$(git rev-parse --abbrev-ref HEAD 2>$null)".Trim() } catch {}
-        Pop-Location
-        $channelMismatch = ($currentBranch -and ($currentBranch -ne $REPO_BRANCH))
-
-        Write-Host "  Local:  v$LocalVer (branch: $currentBranch)"
-        Write-Host "  Remote: v$RemoteVer (branch: $REPO_BRANCH)"
-
-        if (($LocalVer -eq $RemoteVer) -and (-not $channelMismatch)) {
-            Write-Host "  [OK] Already up to date (v$LocalVer)" -ForegroundColor Green
-        } else {
-            Write-Host "  Upgrading v$LocalVer -> v$RemoteVer..."
-            $Backup = "$env:TEMP\brainstem-upgrade-$(Get-Random)"
-            New-Item -ItemType Directory -Force -Path $Backup | Out-Null
-
-            # Backup user files
-            $AgentsDir = "$BRAINSTEM_HOME\src\rapp_brainstem\agents"
-            $SoulFile = "$BRAINSTEM_HOME\src\rapp_brainstem\soul.md"
-            $EnvFile = "$BRAINSTEM_HOME\src\rapp_brainstem\.env"
-            if (Test-Path $SoulFile) { Copy-Item $SoulFile "$Backup\soul.md" }
-            if (Test-Path $EnvFile) { Copy-Item $EnvFile "$Backup\.env" }
-            if (Test-Path $AgentsDir) { Copy-Item "$AgentsDir\*.py" "$Backup\" -ErrorAction SilentlyContinue }
-            Write-Host "  [OK] Backed up soul, agents, config" -ForegroundColor Green
-
-            # Pull latest
-            Push-Location "$BRAINSTEM_HOME\src"
-            try { git stash --quiet 2>&1 | Out-Null } catch {}
-            try { git fetch --quiet origin $REPO_BRANCH 2>&1 | Out-Null } catch {}
-            try { git checkout --quiet $REPO_BRANCH 2>&1 | Out-Null } catch {}
-            try { git reset --hard --quiet "origin/$REPO_BRANCH" 2>&1 | Out-Null } catch {}
-            Pop-Location
-            Write-Host "  [OK] Framework updated (channel: $REPO_BRANCH)" -ForegroundColor Green
-
-            # Restore user files
-            if (Test-Path "$Backup\soul.md") { Copy-Item "$Backup\soul.md" $SoulFile -Force }
-            if (Test-Path "$Backup\.env") { Copy-Item "$Backup\.env" $EnvFile -Force }
-            Get-ChildItem "$Backup\*.py" -ErrorAction SilentlyContinue | ForEach-Object {
-                if ($_.Name -notin @("basic_agent.py", "__init__.py")) {
-                    Copy-Item $_.FullName "$AgentsDir\$($_.Name)" -Force
-                }
-            }
-            Remove-Item -Recurse -Force $Backup -ErrorAction SilentlyContinue
-            Write-Host "  [OK] Upgrade complete: v$LocalVer -> v$RemoteVer" -ForegroundColor Green
+        $currentStamp = Get-CurrentChannelStamp
+        if ($currentStamp -and ($currentStamp -ne $desiredStamp)) {
+            Stash-CurrentInstall
         }
-    } else {
+    }
+
+    # If src/ is now empty, restore from a stashed version of the desired channel,
+    # otherwise clone fresh.
+    if (-not (Test-Path "$BRAINSTEM_HOME\src\.git")) {
         if (Test-Path "$BRAINSTEM_HOME\src") {
             Remove-Item -Recurse -Force "$BRAINSTEM_HOME\src" -ErrorAction SilentlyContinue
         }
-        Write-Host "  Cloning repository (channel: $REPO_BRANCH)..."
-        git clone --quiet --branch $REPO_BRANCH $REPO_URL "$BRAINSTEM_HOME\src" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  [X] Failed to clone repository" -ForegroundColor Red
-            exit 1
+        if (-not (Restore-FromVersions -Stamp $desiredStamp)) {
+            Write-Host "  Cloning repository (channel: $REPO_BRANCH)..."
+            git clone --quiet --branch $REPO_BRANCH $REPO_URL "$BRAINSTEM_HOME\src" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  [X] Failed to clone repository" -ForegroundColor Red
+                exit 1
+            }
         }
     }
+
+    # Smart update — pulls latest within the channel, preserves soul/agents/.env.
+    $LocalVer = "0.0.0"
+    $VerFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
+    if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw -Encoding utf8).Trim() }
+    try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
+
+    Write-Host "  Local:  v$LocalVer (channel: $REPO_BRANCH)"
+    Write-Host "  Remote: v$RemoteVer (channel: $REPO_BRANCH)"
+
+    if ($LocalVer -eq $RemoteVer) {
+        Write-Host "  [OK] Already up to date (v$LocalVer)" -ForegroundColor Green
+    } else {
+        Write-Host "  Upgrading v$LocalVer -> v$RemoteVer..."
+        $Backup = "$env:TEMP\brainstem-upgrade-$(Get-Random)"
+        New-Item -ItemType Directory -Force -Path $Backup | Out-Null
+
+        $AgentsDir = "$BRAINSTEM_HOME\src\rapp_brainstem\agents"
+        $SoulFile = "$BRAINSTEM_HOME\src\rapp_brainstem\soul.md"
+        $EnvFile = "$BRAINSTEM_HOME\src\rapp_brainstem\.env"
+        if (Test-Path $SoulFile) { Copy-Item $SoulFile "$Backup\soul.md" }
+        if (Test-Path $EnvFile) { Copy-Item $EnvFile "$Backup\.env" }
+        if (Test-Path $AgentsDir) { Copy-Item "$AgentsDir\*.py" "$Backup\" -ErrorAction SilentlyContinue }
+        Write-Host "  [OK] Backed up soul, agents, config" -ForegroundColor Green
+
+        Push-Location "$BRAINSTEM_HOME\src"
+        try { git stash --quiet 2>&1 | Out-Null } catch {}
+        try { git fetch --quiet origin $REPO_BRANCH 2>&1 | Out-Null } catch {}
+        try { git checkout --quiet $REPO_BRANCH 2>&1 | Out-Null } catch {}
+        try { git reset --hard --quiet "origin/$REPO_BRANCH" 2>&1 | Out-Null } catch {}
+        Pop-Location
+        Write-Host "  [OK] Framework updated (channel: $REPO_BRANCH)" -ForegroundColor Green
+
+        if (Test-Path "$Backup\soul.md") { Copy-Item "$Backup\soul.md" $SoulFile -Force }
+        if (Test-Path "$Backup\.env") { Copy-Item "$Backup\.env" $EnvFile -Force }
+        Get-ChildItem "$Backup\*.py" -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Name -notin @("basic_agent.py", "__init__.py")) {
+                Copy-Item $_.FullName "$AgentsDir\$($_.Name)" -Force
+            }
+        }
+        Remove-Item -Recurse -Force $Backup -ErrorAction SilentlyContinue
+        Write-Host "  [OK] Upgrade complete: v$LocalVer -> v$RemoteVer" -ForegroundColor Green
+    }
+
     Write-Host "  [OK] Source code ready" -ForegroundColor Green
 }
 
