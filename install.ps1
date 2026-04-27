@@ -8,7 +8,8 @@ $ErrorActionPreference = "Stop"
 $BRAINSTEM_HOME = "$env:USERPROFILE\.brainstem"
 $BRAINSTEM_BIN = "$env:USERPROFILE\.local\bin"
 $REPO_URL = "https://github.com/kody-w/rapp-installer.git"
-$REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
+$REPO_BRANCH = "preview/windows-locale-encoding"
+$REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kody-w/rapp-installer/$REPO_BRANCH/rapp_brainstem/VERSION"
 
 function Print-Banner {
     Write-Host ""
@@ -36,7 +37,7 @@ function Check-ForUpgrade {
 
     if (-not (Test-Path $versionFile)) { return $true }
 
-    $localVersion = (Get-Content $versionFile -Raw).Trim()
+    $localVersion = (Get-Content $versionFile -Raw -Encoding utf8).Trim()
 
     try {
         $remoteVersion = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 10).Content.Trim()
@@ -219,7 +220,7 @@ function Install-Brainstem {
         # Smart update — preserve soul, agents, config
         $LocalVer = "0.0.0"
         $VerFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
-        if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw).Trim() }
+        if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw -Encoding utf8).Trim() }
         try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
 
         Write-Host "  Local:  v$LocalVer"
@@ -244,9 +245,11 @@ function Install-Brainstem {
             # Pull latest
             Push-Location "$BRAINSTEM_HOME\src"
             try { git stash --quiet 2>&1 | Out-Null } catch {}
-            try { git pull --quiet 2>&1 | Out-Null } catch {}
+            try { git fetch --quiet origin $REPO_BRANCH 2>&1 | Out-Null } catch {}
+            try { git checkout --quiet $REPO_BRANCH 2>&1 | Out-Null } catch {}
+            try { git reset --hard --quiet "origin/$REPO_BRANCH" 2>&1 | Out-Null } catch {}
             Pop-Location
-            Write-Host "  [OK] Framework updated" -ForegroundColor Green
+            Write-Host "  [OK] Framework updated (channel: $REPO_BRANCH)" -ForegroundColor Green
 
             # Restore user files
             if (Test-Path "$Backup\soul.md") { Copy-Item "$Backup\soul.md" $SoulFile -Force }
@@ -263,8 +266,8 @@ function Install-Brainstem {
         if (Test-Path "$BRAINSTEM_HOME\src") {
             Remove-Item -Recurse -Force "$BRAINSTEM_HOME\src" -ErrorAction SilentlyContinue
         }
-        Write-Host "  Cloning repository..."
-        git clone --quiet $REPO_URL "$BRAINSTEM_HOME\src" 2>&1
+        Write-Host "  Cloning repository (channel: $REPO_BRANCH)..."
+        git clone --quiet --branch $REPO_BRANCH $REPO_URL "$BRAINSTEM_HOME\src" 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  [X] Failed to clone repository" -ForegroundColor Red
             exit 1
@@ -315,14 +318,14 @@ function Install-CLI {
 cd /d "$BRAINSTEM_HOME\src\rapp_brainstem"
 $py brainstem.py %*
 "@
-    Set-Content -Path "$BRAINSTEM_BIN\brainstem.cmd" -Value $cmdContent
+    [System.IO.File]::WriteAllText("$BRAINSTEM_BIN\brainstem.cmd", $cmdContent, (New-Object System.Text.UTF8Encoding $false))
 
     # PowerShell wrapper
     $psContent = @"
 Set-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
 & "$py" brainstem.py @args
 "@
-    Set-Content -Path "$BRAINSTEM_BIN\brainstem.ps1" -Value $psContent
+    [System.IO.File]::WriteAllText("$BRAINSTEM_BIN\brainstem.ps1", $psContent, (New-Object System.Text.UTF8Encoding $false))
 
     # Add to PATH if not already there
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -344,10 +347,11 @@ function Create-Env {
 }
 
 function Launch-Brainstem {
-    # Always pull latest before launching
+    # Always pull latest before launching (pinned to channel)
     if (Test-Path "$BRAINSTEM_HOME\src\.git") {
         Push-Location "$BRAINSTEM_HOME\src"
-        try { git pull --quiet 2>&1 | Out-Null } catch {}
+        try { git fetch --quiet origin $REPO_BRANCH 2>&1 | Out-Null } catch {}
+        try { git reset --hard --quiet "origin/$REPO_BRANCH" 2>&1 | Out-Null } catch {}
         Pop-Location
     }
 
@@ -358,7 +362,7 @@ function Launch-Brainstem {
     $needsAuth = $true
     if (Test-Path $tokenFile) {
         try {
-            $tokenData = Get-Content $tokenFile -Raw | ConvertFrom-Json
+            $tokenData = Get-Content $tokenFile -Raw -Encoding utf8 | ConvertFrom-Json
             $savedToken = $tokenData.access_token
             if ($savedToken) {
                 $authPrefix = if ($savedToken.StartsWith("ghu_")) { "token" } else { "Bearer" }
@@ -418,7 +422,7 @@ function Launch-Brainstem {
                         if ($pollResp.access_token) {
                             $tokenJson = @{ access_token = $pollResp.access_token }
                             if ($pollResp.refresh_token) { $tokenJson.refresh_token = $pollResp.refresh_token }
-                            $tokenJson | ConvertTo-Json | Set-Content $tokenFile
+                            [System.IO.File]::WriteAllText($tokenFile, ($tokenJson | ConvertTo-Json), (New-Object System.Text.UTF8Encoding $false))
 
                             # Validate Copilot access
                             $authPrefix = if ($pollResp.access_token.StartsWith("ghu_")) { "token" } else { "Bearer" }
@@ -509,7 +513,7 @@ function Main {
 
     $installedVersion = ""
     $vf = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
-    if (Test-Path $vf) { $installedVersion = (Get-Content $vf -Raw).Trim() }
+    if (Test-Path $vf) { $installedVersion = (Get-Content $vf -Raw -Encoding utf8).Trim() }
 
     Write-Host ""
     Write-Host "===================================================" -ForegroundColor Cyan

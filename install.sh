@@ -9,7 +9,8 @@ BRAINSTEM_HOME="$HOME/.brainstem"
 BRAINSTEM_BIN="$HOME/.local/bin"
 VENV_DIR="$BRAINSTEM_HOME/venv"
 REPO_URL="https://github.com/kody-w/rapp-installer.git"
-REMOTE_VERSION_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
+REPO_BRANCH="preview/windows-locale-encoding"
+REMOTE_VERSION_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/${REPO_BRANCH}/rapp_brainstem/VERSION"
 PIN_VERSION=""
 
 # Colors
@@ -292,8 +293,10 @@ install_brainstem() {
                     exit 1
                 fi
             else
-                git pull --quiet 2>/dev/null || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
-                echo -e "  ${GREEN}✓${NC} Framework updated"
+                git fetch --quiet origin "$REPO_BRANCH" 2>/dev/null || true
+                git checkout --quiet "$REPO_BRANCH" 2>/dev/null || true
+                git reset --hard "origin/$REPO_BRANCH" --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
+                echo -e "  ${GREEN}✓${NC} Framework updated (channel: $REPO_BRANCH)"
             fi
 
             # 3. Restore user's local files (merge, don't overwrite)
@@ -318,9 +321,9 @@ install_brainstem() {
             echo -e "  ${GREEN}✓${NC} ${PIN_VERSION:+Pinned to}${PIN_VERSION:-Upgrade complete:} v${TARGET_VER}"
         fi
     else
-        echo "  Fresh install — cloning repository..."
+        echo "  Fresh install — cloning repository (channel: $REPO_BRANCH)..."
         rm -rf "$BRAINSTEM_HOME/src" 2>/dev/null || true
-        git clone --quiet "$REPO_URL" "$BRAINSTEM_HOME/src"
+        git clone --quiet --branch "$REPO_BRANCH" "$REPO_URL" "$BRAINSTEM_HOME/src"
         # If pinning, checkout the specific tag after clone
         if [ -n "$PIN_VERSION" ]; then
             cd "$BRAINSTEM_HOME/src"
@@ -458,10 +461,11 @@ create_env() {
 launch_brainstem() {
     export PATH="$BRAINSTEM_BIN:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-    # Always pull latest code before launching
+    # Always pull latest code before launching (pinned to channel)
     if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
         cd "$BRAINSTEM_HOME/src"
-        git pull --quiet 2>/dev/null || true
+        git fetch --quiet origin "$REPO_BRANCH" 2>/dev/null || true
+        git reset --hard "origin/$REPO_BRANCH" --quiet 2>/dev/null || true
     fi
 
     local venv_python="$VENV_DIR/bin/python"
