@@ -34,8 +34,37 @@ function Compare-SemVer {
 
 function Check-ForUpgrade {
     $versionFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
+    $repoDir = "$BRAINSTEM_HOME\src"
 
     if (-not (Test-Path $versionFile)) { return $true }
+
+    # Verify the existing clone matches our repo and our channel.
+    # Without this, a prior install (different fork, or a different channel) would
+    # be treated as "up to date" and never switch — see preview/windows-locale-encoding feedback.
+    Push-Location $repoDir
+    $originUrl = ""; $currentBranch = ""
+    try { $originUrl = "$(git remote get-url origin 2>$null)".Trim() } catch {}
+    try { $currentBranch = "$(git rev-parse --abbrev-ref HEAD 2>$null)".Trim() } catch {}
+    Pop-Location
+
+    $expectedUrl = $REPO_URL.TrimEnd('.git')
+    $actualUrl = $originUrl.TrimEnd('.git')
+    if ($actualUrl -and ($actualUrl -ne $expectedUrl)) {
+        Write-Host ""
+        Write-Host "  [X] Existing install at $repoDir points to a different repo:" -ForegroundColor Red
+        Write-Host "      origin:   $originUrl" -ForegroundColor Red
+        Write-Host "      expected: $REPO_URL" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Move it aside or remove it, then re-run:" -ForegroundColor Yellow
+        Write-Host "    Remove-Item -Recurse -Force `"$BRAINSTEM_HOME`"" -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
+    if ($currentBranch -and ($currentBranch -ne $REPO_BRANCH)) {
+        Write-Host "  [..] Switching channel: $currentBranch -> $REPO_BRANCH" -ForegroundColor Yellow
+        return $true
+    }
 
     $localVersion = (Get-Content $versionFile -Raw -Encoding utf8).Trim()
 
@@ -223,10 +252,17 @@ function Install-Brainstem {
         if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw -Encoding utf8).Trim() }
         try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
 
-        Write-Host "  Local:  v$LocalVer"
-        Write-Host "  Remote: v$RemoteVer"
+        # Detect channel mismatch — force upgrade path even if versions match
+        Push-Location "$BRAINSTEM_HOME\src"
+        $currentBranch = ""
+        try { $currentBranch = "$(git rev-parse --abbrev-ref HEAD 2>$null)".Trim() } catch {}
+        Pop-Location
+        $channelMismatch = ($currentBranch -and ($currentBranch -ne $REPO_BRANCH))
 
-        if ($LocalVer -eq $RemoteVer) {
+        Write-Host "  Local:  v$LocalVer (branch: $currentBranch)"
+        Write-Host "  Remote: v$RemoteVer (branch: $REPO_BRANCH)"
+
+        if (($LocalVer -eq $RemoteVer) -and (-not $channelMismatch)) {
             Write-Host "  [OK] Already up to date (v$LocalVer)" -ForegroundColor Green
         } else {
             Write-Host "  Upgrading v$LocalVer -> v$RemoteVer..."
