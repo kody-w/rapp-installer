@@ -84,16 +84,38 @@ def _fetch_copilot_models():
             models_list = data if isinstance(data, list) else data.get("data", data.get("models", []))
             if models_list:
                 new_models = []
+                skipped = []
                 for m in models_list:
                     mid = m.get("id", m.get("model", ""))
                     mname = m.get("name", mid)
-                    if mid:
-                        new_models.append({"id": mid, "name": mname})
-                        if "o1" in mid.lower():
-                            _NO_TOOL_CHOICE_MODELS.add(mid)
+                    if not mid:
+                        continue
+                    caps = m.get("capabilities", {}) or {}
+                    # Only chat models — embeddings can't be driven via /chat.
+                    if caps.get("type", "chat") != "chat":
+                        skipped.append(mid)
+                        continue
+                    # Only keep models the Copilot API will actually serve over
+                    # /chat/completions. Some listed models (e.g. gpt-5.5,
+                    # *-codex, mai-code-*) are Responses-API-only and reject
+                    # chat/completions with "unsupported_api_for_model". Fail
+                    # OPEN when the field is absent (older API responses omit it)
+                    # so a schema change doesn't wipe the list; a present list
+                    # that lacks /chat/completions (including an empty list)
+                    # means the model has no chat route -> skip it.
+                    endpoints = m.get("supported_endpoints")
+                    if endpoints is not None and "/chat/completions" not in endpoints:
+                        skipped.append(mid)
+                        continue
+                    new_models.append({"id": mid, "name": mname})
+                    if "o1" in mid.lower():
+                        _NO_TOOL_CHOICE_MODELS.add(mid)
                 if new_models:
                     AVAILABLE_MODELS = new_models
-                    print(f"[brainstem] Fetched {len(new_models)} models from Copilot API")
+                    msg = f"[brainstem] Fetched {len(new_models)} chat models from Copilot API"
+                    if skipped:
+                        msg += f" (skipped {len(skipped)} non-chat / Responses-API-only)"
+                    print(msg)
         _models_fetched = True
     except Exception as e:
         print(f"[brainstem] Could not fetch models (using defaults): {e}")
@@ -850,7 +872,10 @@ def call_copilot(messages, tools=None):
     if has_tools:
         print(f"[brainstem]   tool_calls: {[tc.get('function',{}).get('name','?') for tc in msg['tool_calls']]}")
 
-    return result
+    # body["model"] holds whichever model actually produced this 200 — it differs
+    # from MODEL when the fallback loop above had to switch models. Return it so
+    # callers can surface a silent substitution instead of hiding it.
+    return result, body["model"]
 
 # ── Agent execution ───────────────────────────────────────────────────────────
 
@@ -925,9 +950,10 @@ def chat():
         messages.append({"role": "user", "content": user_input})
 
         all_logs = []
+        responded_model = MODEL
         # Up to 3 tool-call rounds
         for _ in range(3):
-            response = call_copilot(messages, tools=tools)
+            response, responded_model = call_copilot(messages, tools=tools)
             choice   = response["choices"][0]
             msg      = choice["message"]
             finish   = choice.get("finish_reason", "")
@@ -949,6 +975,11 @@ def chat():
             "session_id": session_id,
             "agent_logs": "\n".join(all_logs),
             "voice_mode": VOICE_MODE,
+            # The model that actually answered. Differs from `requested_model`
+            # when call_copilot's fallback loop had to switch models, so clients
+            # can show "answered by X" instead of silently misattributing it.
+            "model": responded_model,
+            "requested_model": MODEL,
         }
         
         if VOICE_MODE and "|||VOICE|||" in reply:

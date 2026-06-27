@@ -451,5 +451,75 @@ class TestMemoryAgentIntegration(unittest.TestCase):
         self.assertIn("brainstem", result.lower())
 
 
+class TestFetchCopilotModels(unittest.TestCase):
+    """_fetch_copilot_models() must keep only chat models with a /chat/completions route."""
+
+    # A model with a /chat/completions route, a Responses-API-only chat model,
+    # an embeddings model, a legacy chat model with no endpoints field, a chat
+    # model with an empty endpoints list, and an o1 model.
+    SAMPLE = [
+        {"id": "chat-ok", "name": "Chat OK", "capabilities": {"type": "chat"},
+         "supported_endpoints": ["/responses", "/chat/completions"]},
+        {"id": "responses-only", "name": "Responses Only", "capabilities": {"type": "chat"},
+         "supported_endpoints": ["/responses", "ws:/responses"]},
+        {"id": "embed-1", "name": "Embed", "capabilities": {"type": "embeddings"}},
+        {"id": "chat-legacy", "name": "Legacy chat (no endpoints field)",
+         "capabilities": {"type": "chat"}},
+        {"id": "chat-empty-endpoints", "name": "Empty endpoints",
+         "capabilities": {"type": "chat"}, "supported_endpoints": []},
+        {"id": "o1-preview", "name": "o1 preview", "capabilities": {"type": "chat"},
+         "supported_endpoints": ["/chat/completions"]},
+    ]
+
+    def setUp(self):
+        import brainstem
+        self.brainstem = brainstem
+        self._orig_models = list(brainstem.AVAILABLE_MODELS)
+        self._orig_no_tc = set(brainstem._NO_TOOL_CHOICE_MODELS)
+        self._orig_fetched = brainstem._models_fetched
+
+    def tearDown(self):
+        self.brainstem.AVAILABLE_MODELS = self._orig_models
+        self.brainstem._NO_TOOL_CHOICE_MODELS = self._orig_no_tc
+        self.brainstem._models_fetched = self._orig_fetched
+
+    def _run_fetch(self, payload):
+        from unittest.mock import patch, MagicMock
+        self.brainstem._models_fetched = False
+        self.brainstem._NO_TOOL_CHOICE_MODELS = set()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = payload
+        with patch.object(self.brainstem, "get_copilot_token", return_value=("tok", "https://api.example")):
+            with patch("requests.get", return_value=mock_resp):
+                self.brainstem._fetch_copilot_models()
+
+    def test_filters_to_chat_completions_models(self):
+        self._run_fetch({"data": self.SAMPLE})
+        ids = [m["id"] for m in self.brainstem.AVAILABLE_MODELS]
+        # Kept: chat route present, OR endpoints field absent (fail open).
+        self.assertIn("chat-ok", ids)
+        self.assertIn("chat-legacy", ids)
+        self.assertIn("o1-preview", ids)
+        # Skipped: Responses-only, embeddings, and empty endpoints list.
+        self.assertNotIn("responses-only", ids)
+        self.assertNotIn("embed-1", ids)
+        self.assertNotIn("chat-empty-endpoints", ids)
+        self.assertEqual(len(ids), 3)
+
+    def test_o1_model_marked_no_tool_choice(self):
+        self._run_fetch({"data": self.SAMPLE})
+        self.assertIn("o1-preview", self.brainstem._NO_TOOL_CHOICE_MODELS)
+        self.assertNotIn("chat-ok", self.brainstem._NO_TOOL_CHOICE_MODELS)
+
+    def test_empty_result_keeps_defaults(self):
+        """If filtering yields nothing, the existing AVAILABLE_MODELS is preserved."""
+        sentinel = [{"id": "keep-me", "name": "Keep Me"}]
+        self.brainstem.AVAILABLE_MODELS = list(sentinel)
+        # Only an embeddings model -> filtered out -> new_models empty -> defaults kept.
+        self._run_fetch({"data": [{"id": "embed-only", "capabilities": {"type": "embeddings"}}]})
+        self.assertEqual(self.brainstem.AVAILABLE_MODELS, sentinel)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

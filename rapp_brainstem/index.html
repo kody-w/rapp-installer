@@ -1892,10 +1892,19 @@
           content: d.response,
           agent_logs: d.agent_logs || null,
           voice_response: d.voice_response || null,
-          model: document.getElementById('model-select')?.value || null,
+          // Record the model that actually answered (d.model), falling back to
+          // the selected one for older servers that don't report it.
+          model: d.model || document.getElementById('model-select')?.value || null,
           session_id: d.session_id,
           timestamp: new Date().toISOString()
         });
+        // If the server had to fall back to a different model, say so instead of
+        // silently misattributing the answer to the selected model.
+        if (d.model && d.requested_model && d.model !== d.requested_model) {
+          const wrap = appendMsg('system', '');
+          wrap.querySelector('.bubble').innerHTML =
+            `↪ <strong>${d.requested_model}</strong> was unavailable — answered by <strong>${d.model}</strong>.`;
+        }
         appendMsg('assistant', d.response, d.agent_logs && d.agent_logs.trim() ? d.agent_logs : null);
         if (d.voice_response) {
           speakText(d.voice_response);
