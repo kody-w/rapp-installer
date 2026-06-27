@@ -817,6 +817,10 @@ def call_copilot(messages, tools=None):
                     break
                 print(f"[brainstem] {fallback_model} also failed ({resp.status_code})")
     resp.raise_for_status()
+    # Copilot's chat endpoint may return JSON without a charset; requests then defaults
+    # text/* responses to ISO-8859-1, decoding UTF-8 emoji/em-dashes as Latin-1 mojibake
+    # (e.g. 🧠 -> "ðŸ§ ", — -> "â€""). Force UTF-8 so resp.json() decodes correctly.
+    resp.encoding = "utf-8"
     result = resp.json()
 
     # ── Normalize multi-choice responses ──────────────────────────────────────
