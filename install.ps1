@@ -284,8 +284,23 @@ function Run-PipInstall {
 
 function Check-PythonDeps {
     $py = if ($script:PythonExe) { $script:PythonExe } else { "python" }
-    $proc = Start-Process -FilePath $py -ArgumentList "-c", "import flask, flask_cors, requests, dotenv" -NoNewWindow -Wait -PassThru
-    return $proc.ExitCode -eq 0
+    # Use the call operator, NOT Start-Process -ArgumentList. Start-Process joins array
+    # arguments with spaces but does not re-quote an element that itself contains spaces,
+    # so "-c", "import flask, flask_cors, ..." reached python as the tokens
+    # "-c import flask, flask_cors, ..." — python's -c got only "import" -> SyntaxError.
+    # The call operator quotes arguments correctly. Drop ErrorActionPreference to Continue
+    # locally so python's stderr (e.g. when a module is missing) is not promoted to a
+    # terminating NativeCommandError under the script's global $ErrorActionPreference='Stop'.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $py -c "import flask, flask_cors, requests, dotenv" 2>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 function Setup-Dependencies {
