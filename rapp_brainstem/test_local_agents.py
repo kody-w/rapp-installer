@@ -427,7 +427,11 @@ class TestMemoryAgentIntegration(unittest.TestCase):
 
         for name in ["manage_memory_agent.py", "context_memory_agent.py"]:
             resp = requests.get(f"{base}/{name}", timeout=10)
-            with open(os.path.join(self._tmp, name), "w") as f:
+            resp.encoding = "utf-8"  # the agent sources are UTF-8 (contain a • bullet)
+            # Write UTF-8 explicitly: on Windows the default open() encoding is
+            # cp1252, which would turn the • into a lone 0x95 byte that brainstem's
+            # UTF-8 _load_agent_from_file then rejects.
+            with open(os.path.join(self._tmp, name), "w", encoding="utf-8") as f:
                 f.write(resp.text)
 
         import brainstem
