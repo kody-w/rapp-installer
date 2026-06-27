@@ -276,9 +276,13 @@ function Install-Brainstem {
 function Run-PipInstall {
     $reqFile = "$BRAINSTEM_HOME\src\rapp_brainstem\requirements.txt"
     $py = if ($script:PythonExe) { $script:PythonExe } else { "python" }
-    $proc = Start-Process -FilePath $py -ArgumentList "-m", "pip", "install", "-r", $reqFile -NoNewWindow -Wait -PassThru
+    # Pass the argument line as a single quoted string. Start-Process -ArgumentList with an
+    # ARRAY joins elements with spaces but does not re-quote an element that itself contains
+    # spaces, so a $reqFile path containing a space (e.g. C:\Users\First Last\...) would be
+    # split and pip would fail with "Could not open requirements file".
+    $proc = Start-Process -FilePath $py -ArgumentList "-m pip install -r `"$reqFile`"" -NoNewWindow -Wait -PassThru
     if ($proc.ExitCode -ne 0) {
-        $proc = Start-Process -FilePath $py -ArgumentList "-m", "pip", "install", "-r", $reqFile, "--user" -NoNewWindow -Wait -PassThru | Out-Null
+        $proc = Start-Process -FilePath $py -ArgumentList "-m pip install -r `"$reqFile`" --user" -NoNewWindow -Wait -PassThru
     }
 }
 
