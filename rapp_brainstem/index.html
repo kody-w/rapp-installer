@@ -1682,12 +1682,23 @@
       // forgets any remembered manual pick.
       const autoOpt = document.createElement('option');
       autoOpt.value = 'auto';
-      autoOpt.textContent = 'Auto — highest Sonnet';
+      autoOpt.textContent = 'Auto';
       sel.appendChild(autoOpt);
+      // GitHub returns several ids under one display name (dated snapshots + a
+      // bare alias) — collapse each name to one entry, keeping the cleanest
+      // (shortest) id, e.g. "gpt-4o" over "gpt-4o-2024-05-13".
+      const byName = new Map();
       (d.models || []).forEach(m => {
+        const prev = byName.get(m.name);
+        if (!prev || (m.id || '').length < (prev.id || '').length) byName.set(m.name, m);
+      });
+      // Alphabetical by display name (case-insensitive); "Auto" stays pinned above.
+      const models = [...byName.values()].sort((a, b) =>
+        (a.name || a.id).localeCompare(b.name || b.id, undefined, { sensitivity: 'base' }));
+      models.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m.id;
-        opt.textContent = m.available === false ? `${m.name} (not enabled)` : m.name;
+        opt.textContent = m.name;
         if (m.id === d.current) opt.selected = true;
         sel.appendChild(opt);
       });

@@ -261,7 +261,6 @@ def _auto_select_default_model():
         if best is not None:
             MODEL = best[1]
             _tlog("model.auto_selected", {"model": MODEL})
-            print(f"[brainstem] Auto-selected default model: {MODEL} (highest available Claude Sonnet)")
         # else: no usable Sonnet -> keep gpt-4o (or whatever MODEL already is).
     except Exception as e:
         print(f"[brainstem] Auto-select skipped: {e}")
@@ -295,6 +294,11 @@ def _fetch_copilot_models():
                     mname = m.get("name", mid)
                     if not mid:
                         continue
+                    # Skip Copilot's internal utility models that aren't user-pickable
+                    # chat models (e.g. trajectory-compaction).
+                    if mid.lower() == "trajectory-compaction":
+                        skipped.append(mid)
+                        continue
                     caps = m.get("capabilities", {}) or {}
                     # Only chat models — embeddings can't be driven via /chat.
                     if caps.get("type", "chat") != "chat":
@@ -320,10 +324,6 @@ def _fetch_copilot_models():
                 if new_models:
                     AVAILABLE_MODELS = new_models
                     _models_fetched = True  # latch only on a successful catalog fetch
-                    msg = f"[brainstem] Fetched {len(new_models)} chat models from Copilot API"
-                    if skipped:
-                        msg += f" (skipped {len(skipped)} non-chat / Responses-API-only)"
-                    print(msg)
     except Exception as e:
         print(f"[brainstem] Could not fetch models (using defaults): {e}")
     # Settle the default now that a real catalog (with availability) may exist.
