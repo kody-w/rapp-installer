@@ -241,12 +241,27 @@ function Install-Brainstem {
             if (Test-Path $AgentsDir) { Copy-Item "$AgentsDir\*.py" "$Backup\" -ErrorAction SilentlyContinue }
             Write-Host "  [OK] Backed up soul, agents, config" -ForegroundColor Green
 
-            # Pull latest
+            # Pull latest from THIS installer's repo. A prior install may have cloned from a
+            # different origin (fork/mirror); repoint origin and hard-reset to it so the upgrade
+            # is reliable even across unrelated histories. User files (soul, agents, .env) were
+            # backed up above and are restored below; tokens and .brainstem_data are gitignored.
             Push-Location "$BRAINSTEM_HOME\src"
-            try { git stash --quiet 2>&1 | Out-Null } catch {}
-            try { git pull --quiet 2>&1 | Out-Null } catch {}
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            git remote set-url origin $REPO_URL 2>&1 | Out-Null
+            git fetch --quiet origin main 2>&1 | Out-Null
+            $pullOk = ($LASTEXITCODE -eq 0)
+            if ($pullOk) {
+                git reset --hard --quiet FETCH_HEAD 2>&1 | Out-Null
+                $pullOk = ($LASTEXITCODE -eq 0)
+            }
+            $ErrorActionPreference = $prevEAP
             Pop-Location
-            Write-Host "  [OK] Framework updated" -ForegroundColor Green
+            if ($pullOk) {
+                Write-Host "  [OK] Framework updated" -ForegroundColor Green
+            } else {
+                Write-Host "  [!] Update download failed — keeping existing files (v$LocalVer)" -ForegroundColor Yellow
+            }
 
             # Restore user files
             if (Test-Path "$Backup\soul.md") { Copy-Item "$Backup\soul.md" $SoulFile -Force }
@@ -257,7 +272,15 @@ function Install-Brainstem {
                 }
             }
             Remove-Item -Recurse -Force $Backup -ErrorAction SilentlyContinue
-            Write-Host "  [OK] Upgrade complete: v$LocalVer -> v$RemoteVer" -ForegroundColor Green
+            # Report the version actually on disk after the pull, not the remote string —
+            # if the pull failed the banner must not claim a successful upgrade.
+            $NewVer = $LocalVer
+            if (Test-Path $VerFile) { $NewVer = (Get-Content $VerFile -Raw).Trim() }
+            if ($pullOk -and $NewVer -ne $LocalVer) {
+                Write-Host "  [OK] Upgrade complete: v$LocalVer -> v$NewVer" -ForegroundColor Green
+            } elseif ($pullOk) {
+                Write-Host "  [OK] Already at the latest framework (v$NewVer)" -ForegroundColor Green
+            }
         }
     } else {
         if (Test-Path "$BRAINSTEM_HOME\src") {
@@ -363,10 +386,14 @@ function Create-Env {
 }
 
 function Launch-Brainstem {
-    # Always pull latest before launching
+    # Refresh from this installer's repo before launching (no-op if already current).
     if (Test-Path "$BRAINSTEM_HOME\src\.git") {
         Push-Location "$BRAINSTEM_HOME\src"
-        try { git pull --quiet 2>&1 | Out-Null } catch {}
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        git remote set-url origin $REPO_URL 2>&1 | Out-Null
+        git pull --quiet origin main 2>&1 | Out-Null
+        $ErrorActionPreference = $prevEAP
         Pop-Location
     }
 
