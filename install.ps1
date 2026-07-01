@@ -329,13 +329,22 @@ function Install-Brainstem {
 function Run-PipInstall {
     $reqFile = "$BRAINSTEM_HOME\src\rapp_brainstem\requirements.txt"
     $py = Resolve-PythonExe
-    # Pass the argument line as a single quoted string. Start-Process -ArgumentList with an
-    # ARRAY joins elements with spaces but does not re-quote an element that itself contains
-    # spaces, so a $reqFile path containing a space (e.g. C:\Users\First Last\...) would be
-    # split and pip would fail with "Could not open requirements file".
-    $proc = Start-Process -FilePath $py -ArgumentList "-m pip install -r `"$reqFile`"" -NoNewWindow -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        $proc = Start-Process -FilePath $py -ArgumentList "-m pip install -r `"$reqFile`" --user" -NoNewWindow -Wait -PassThru
+    # Use the call operator, NOT Start-Process (same reasoning as Check-PythonDeps):
+    # the call operator quotes a $reqFile path containing spaces correctly, and it
+    # needs no console attachment — Start-Process -NoNewWindow -Wait can block
+    # forever in consoleless sessions (CI, some terminal hosts). Drop
+    # ErrorActionPreference to Continue locally so pip's stderr progress lines are
+    # not promoted to a terminating NativeCommandError under the script's global
+    # $ErrorActionPreference = 'Stop'.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $py -m pip install -r $reqFile 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) {
+            & $py -m pip install -r $reqFile --user 2>&1 | ForEach-Object { "$_" }
+        }
+    } finally {
+        $ErrorActionPreference = $prev
     }
 }
 

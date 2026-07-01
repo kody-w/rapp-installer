@@ -165,11 +165,13 @@ jobs:
           # Same execution path as `irm | iex` (script text through iex, no
           # $PSCommandPath) — but only a tiny bootstrap is encoded: base64 of the
           # whole installer would blow the 32,767-char command-line limit.
+          # Launch through cmd's own file redirection: every descendant (pip, the
+          # server) inherits real writable file handles. Start-Process handle
+          # redirection left grandchildren blocked on console/handle semantics in
+          # the consoleless CI session and the install hung silently.
           $boot = "iex (Get-Content -Raw -Encoding UTF8 '$PWD\install.ps1')"
           $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($boot))
-          Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$enc `
-            -RedirectStandardOutput "$env:RUNNER_TEMP\install.log" `
-            -RedirectStandardError "$env:RUNNER_TEMP\install.err" -NoNewWindow
+          Start-Process cmd -ArgumentList '/c',"powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc > `"$env:RUNNER_TEMP\install.log`" 2>&1"
 
       - name: wait for a serving brainstem, then assert
         shell: bash
@@ -218,6 +220,16 @@ jobs:
         run: |
           echo "── install.log ──"; tail -100 "$RUNNER_TEMP/install.log" 2>/dev/null || true
           echo "── install.err ──"; tail -40 "$RUNNER_TEMP/install.err" 2>/dev/null || true
+
+      # If the install wedges, show exactly which process is stuck and on what.
+      - name: diagnose processes (windows)
+        if: always() && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Get-CimInstance Win32_Process |
+            Where-Object { $_.Name -match 'python|pip|powershell|pwsh|cmd|gh|winget|git' } |
+            Select-Object ProcessId, ParentProcessId, Name, CommandLine |
+            Format-List | Out-String | Write-Host
 
       - uses: actions/upload-artifact@v4
         if: always()
