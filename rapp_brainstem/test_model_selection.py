@@ -1,5 +1,5 @@
 """
-Tests for Sonnet auto-selection + sticky model persistence (brainstem.py).
+Tests for Claude model auto-selection (Haiku-first) + sticky model persistence (brainstem.py).
 
 Runs two ways:
     python3 -m pytest test_model_selection.py -v     # with pytest
@@ -100,6 +100,23 @@ def test_sonnet_rank_total_order():
     assert len(set(order)) == len(order)  # strictly increasing
 
 
+# ── _haiku_rank ───────────────────────────────────────────────────────────────
+
+def test_haiku_rank_both_naming_shapes():
+    assert bs._haiku_rank("claude-3-5-haiku-20241022") == (3, 5)
+    assert bs._haiku_rank("claude-3.5-haiku") == (3, 5)
+    assert bs._haiku_rank("claude-haiku-4.5") == (4, 5)
+    assert bs._haiku_rank("claude-haiku-4-5") == (4, 5)
+    assert bs._haiku_rank("claude-x", "Claude Haiku 4.5") == (4, 5)  # name fallback
+
+
+def test_haiku_rank_excludes_non_haiku():
+    assert bs._haiku_rank("claude-sonnet-4.5") is None
+    assert bs._haiku_rank("claude-opus-4.5") is None
+    assert bs._haiku_rank("gpt-4o") is None
+    assert bs._haiku_rank("gpt-5", "Claude Haiku 4.5") is None  # name spoof blocked
+
+
 # ── _model_is_available ───────────────────────────────────────────────────────
 
 def test_available_policy_states():
@@ -135,6 +152,28 @@ def _reset(models, *, model="gpt-4o", pinned=False, fetched=True):
     bs.MODEL_PINNED = pinned
     bs.MODEL = model
     bs.AVAILABLE_MODELS = models
+
+
+def test_auto_select_prefers_haiku_over_higher_sonnet():
+    # Haiku wins the default even against a higher-versioned Sonnet:
+    # response speed beats raw intelligence for the default chat experience.
+    _reset([
+        {"id": "claude-sonnet-4-6-20260217", "name": "Claude Sonnet 4.6", "available": True},
+        {"id": "claude-haiku-4.5", "name": "Claude Haiku 4.5", "available": True},
+        {"id": "gpt-4o", "name": "GPT-4o", "available": True},
+    ])
+    bs._auto_select_default_model()
+    assert bs.MODEL == "claude-haiku-4.5"
+
+
+def test_auto_select_picks_highest_available_haiku():
+    _reset([
+        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "available": True},
+        {"id": "claude-haiku-4.5", "name": "Claude Haiku 4.5", "available": True},
+        {"id": "claude-haiku-5", "name": "Claude Haiku 5", "available": False},  # not on plan
+    ])
+    bs._auto_select_default_model()
+    assert bs.MODEL == "claude-haiku-4.5"
 
 
 def test_auto_select_picks_highest_available_sonnet():

@@ -152,7 +152,7 @@ All config is via environment variables in `.env` (auto-created from `.env.examp
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | *auto-detected* | GitHub PAT or Copilot token. Auto-detected from `gh auth token` if blank. |
-| `GITHUB_MODEL` | `auto` | `auto` picks the highest Claude Sonnet your account can use (falling back to `gpt-4o`), or pin a specific id. A model picked in the web UI is remembered (`.brainstem_model`) and overrides this. Changeable at runtime via `/models/set` (`"model": "auto"` re-selects). |
+| `GITHUB_MODEL` | `auto` | `auto` picks the highest Claude Haiku your account can use — fastest responses (falling back to the highest Sonnet, then `gpt-4o`), or pin a specific id. A model picked in the web UI is remembered (`.brainstem_model`) and overrides this. Changeable at runtime via `/models/set` (`"model": "auto"` re-selects). |
 | `SOUL_PATH` | `./soul.md` | Path to the system prompt file. |
 | `AGENTS_PATH` | `./agents` | Directory to discover `*_agent.py` files from. |
 | `PORT` | `7071` | Server port. |

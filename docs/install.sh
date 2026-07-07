@@ -681,8 +681,19 @@ with open(sys.argv[2], 'w') as f: json.dump(out, f)
         sleep 1
     fi
 
-    # Open the browser after a short delay
-    (sleep 3 && (open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null)) &
+    # Open the browser once the server actually answers (#14) — a fixed delay
+    # races cold startups (token exchange, dep installs) and lands the user on
+    # a dead-port error page. Poll /health, then open; after 60s open anyway so
+    # the user still gets the tab (with the URL bar filled in) on a slow start.
+    (
+        for _ in $(seq 1 60); do
+            if curl -sf -o /dev/null --max-time 1 "http://localhost:7071/health" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        open "http://localhost:7071" 2>/dev/null || xdg-open "http://localhost:7071" 2>/dev/null || true
+    ) &
 
     # Final dep safety net — if somehow we got here without deps, fix it
     if ! "$venv_python" -c "import flask, flask_cors, requests, dotenv" 2>/dev/null; then

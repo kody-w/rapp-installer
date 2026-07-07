@@ -68,7 +68,8 @@ AGENTS_PATH = _resolve_under_base(os.getenv("AGENTS_PATH"), "agents")
 # Model selection precedence (see _auto_select_default_model below):
 #   1. .brainstem_model — a model picked in the UI, persisted across restarts
 #   2. GITHUB_MODEL pinned to a specific id (anything other than "auto")
-#   3. GITHUB_MODEL="auto" / unset -> highest Claude Sonnet the account can use
+#   3. GITHUB_MODEL="auto" / unset -> highest Claude Haiku the account can use
+#      (fastest responses), falling back to the highest Sonnet
 #   4. gpt-4o safety net (also the call_copilot fallback)
 MODEL_ENV    = (os.getenv("GITHUB_MODEL") or "").strip()
 MODEL_PINNED = bool(MODEL_ENV) and MODEL_ENV.lower() != "auto"
@@ -168,30 +169,35 @@ MODEL = _load_sticky_model() or MODEL
 # to its base generation; _auto_select_default_model breaks the tie toward base.
 _REASONING_SUFFIXES = ("thought", "thinking", "reasoning")
 
-def _sonnet_rank(model_id, model_name=""):
-    """Return a comparable (major, minor) version tuple for a Claude *Sonnet*
-    model, or None if the model is not a Claude Sonnet.
+_CLAUDE_FAMILIES = ("sonnet", "haiku", "opus")
+
+def _claude_rank(model_id, model_name="", family="sonnet"):
+    """Return a comparable (major, minor) version tuple for a Claude model of
+    the given family (sonnet / haiku / opus), or None if it isn't one.
 
     Handles both Copilot naming shapes:
-      version-before-name:  claude-3.5-sonnet, claude-3-5-sonnet-20241022, claude-3.7-sonnet
-      version-after-name:   claude-sonnet-4, claude-sonnet-4.5, claude-sonnet-4-5-20250929
+      version-before-name:  claude-3.5-sonnet, claude-3-5-haiku-20241022, claude-3.7-sonnet
+      version-after-name:   claude-sonnet-4, claude-haiku-4.5, claude-sonnet-4-5-20250929
 
     Robustness contract (adversarially verified):
-      - Only Claude Sonnet ranks; gpt-*, gemini-*, claude-opus-*, claude-*-haiku -> None.
+      - Only the requested Claude family ranks; gpt-*, gemini-*, and the other
+        two Claude families -> None.
       - A trailing numeric snapshot of 4+ digits (year/YYYYMM/YYYYMMDD/timestamp)
         is stripped and never read as a version.
-      - 'sonnet' must be a whole word (\\bsonnet\\b), so 'claude-personnet-4.5' -> None.
+      - The family word must be a whole word (\\bsonnet\\b), so
+        'claude-personnet-4.5' -> None.
       - model_name is consulted ONLY as a fallback when model_id is itself a Claude
-        id, so a non-Sonnet whose display name merely mentions 'Claude Sonnet 4.5'
+        id, so a non-Claude whose display name merely mentions 'Claude Sonnet 4.5'
         (e.g. id='gpt-5') -> None.
       - A separator-less multi-digit version is read as the MAJOR
         (claude-sonnet-10 -> (10, 0)), so a future double-digit generation ranks
         ABOVE every 3.x/4.x instead of collapsing to (1, 0).
       - Orders 3 < 3.5 < 3.7 < 4 < 4.5 < 4.6 < 5 < 10 ...
     """
+    other_families = [f for f in _CLAUDE_FAMILIES if f != family]
     mid = str(model_id or "").strip().lower()
     # Only trust model_name when the *id* already marks this as a Claude model;
-    # this stops a non-Claude id (e.g. 'gpt-5') borrowing a Sonnet rank from prose.
+    # this stops a non-Claude id (e.g. 'gpt-5') borrowing a Claude rank from prose.
     candidates = [mid]
     if "claude" in mid:
         candidates.append(str(model_name or "").strip().lower())
@@ -199,9 +205,9 @@ def _sonnet_rank(model_id, model_name=""):
     for s in candidates:
         if not s:
             continue
-        if "claude" not in s or not re.search(r"\bsonnet\b", s):
+        if "claude" not in s or not re.search(rf"\b{family}\b", s):
             continue
-        if "opus" in s or "haiku" in s:
+        if any(other in s for other in other_families):
             continue
 
         # Strip reasoning-variant suffixes first ...
@@ -211,11 +217,11 @@ def _sonnet_rank(model_id, model_name=""):
         # end). Real version parts are 1-3 digits, so this never eats a major/minor.
         s = re.sub(r"[-_.]?\d{4,}$", "", s)
 
-        # Shape A -- version BEFORE "sonnet": claude-3.5-sonnet / claude-3-5-sonnet
-        m = re.search(r"claude[-_ ]+v?(\d+(?:[.\-_]\d+)?)[-_ ]+sonnet", s)
+        # Shape A -- version BEFORE the family word: claude-3.5-sonnet / claude-3-5-haiku
+        m = re.search(rf"claude[-_ ]+v?(\d+(?:[.\-_]\d+)?)[-_ ]+{family}", s)
         if not m:
-            # Shape B -- version AFTER "sonnet": claude-sonnet-4 / -4.5 / -4-5
-            m = re.search(r"sonnet[-_ ]+v?(\d+(?:[.\-_]\d+)?)", s)
+            # Shape B -- version AFTER the family word: claude-sonnet-4 / claude-haiku-4.5
+            m = re.search(rf"{family}[-_ ]+v?(\d+(?:[.\-_]\d+)?)", s)
         if not m:
             continue
 
@@ -237,6 +243,12 @@ def _sonnet_rank(model_id, model_name=""):
             continue
         return (major, minor)
     return None
+
+def _sonnet_rank(model_id, model_name=""):
+    return _claude_rank(model_id, model_name, family="sonnet")
+
+def _haiku_rank(model_id, model_name=""):
+    return _claude_rank(model_id, model_name, family="haiku")
 
 # Policy states that mean the signed-in account is NOT entitled to call the model.
 _POLICY_BAD_STATES = {"unconfigured", "not_configured", "disabled", "blocked", "denied"}
@@ -282,10 +294,13 @@ def _model_is_available(model_obj):
     return True
 
 def _auto_select_default_model():
-    """Set the module global MODEL to the highest-version Claude Sonnet the account
-    can actually use, keeping gpt-4o as the safety net. A persisted manual pick or
-    an explicit GITHUB_MODEL pin always wins. Idempotent (guard flag) and safe to
-    call before auth is ready or the catalog is fetched.
+    """Set the module global MODEL to the highest-version Claude HAIKU the account
+    can actually use — Haiku answers noticeably faster than Sonnet, and response
+    latency matters more than raw intelligence for the default chat experience.
+    Falls back to the highest Sonnet when the plan has no Haiku, keeping gpt-4o
+    as the final safety net. A persisted manual pick or an explicit GITHUB_MODEL
+    pin always wins. Idempotent (guard flag) and safe to call before auth is
+    ready or the catalog is fetched.
     """
     global MODEL, _default_model_selected
     if _default_model_selected:
@@ -299,23 +314,25 @@ def _auto_select_default_model():
     if not _models_fetched:
         return
     try:
-        best = None  # ((rank_tuple, is_base), id)
-        for m in AVAILABLE_MODELS:
-            if not m.get("available"):  # only models confirmed usable by the fetch
-                continue
-            rank = _sonnet_rank(m.get("id", ""), m.get("name", ""))
-            if rank is None:
-                continue
-            mid = str(m.get("id", "")).lower()
-            # Tie-break: prefer the plain base model over a -thought/-thinking variant.
-            is_base = not any(suf in mid for suf in _REASONING_SUFFIXES)
-            key = (rank, is_base)
-            if best is None or key > best[0]:
-                best = (key, m["id"])
-        if best is not None:
-            MODEL = best[1]
-            _tlog("model.auto_selected", {"model": MODEL})
-        # else: no usable Sonnet -> keep gpt-4o (or whatever MODEL already is).
+        for family in ("haiku", "sonnet"):  # speed first, capability fallback
+            best = None  # ((rank_tuple, is_base), id)
+            for m in AVAILABLE_MODELS:
+                if not m.get("available"):  # only models confirmed usable by the fetch
+                    continue
+                rank = _claude_rank(m.get("id", ""), m.get("name", ""), family=family)
+                if rank is None:
+                    continue
+                mid = str(m.get("id", "")).lower()
+                # Tie-break: prefer the plain base model over a -thought/-thinking variant.
+                is_base = not any(suf in mid for suf in _REASONING_SUFFIXES)
+                key = (rank, is_base)
+                if best is None or key > best[0]:
+                    best = (key, m["id"])
+            if best is not None:
+                MODEL = best[1]
+                _tlog("model.auto_selected", {"model": MODEL, "family": family})
+                break
+        # else: no usable Haiku or Sonnet -> keep gpt-4o (or whatever MODEL already is).
     except Exception as e:
         print(f"[brainstem] Auto-select skipped: {e}")
     _default_model_selected = True
@@ -1969,7 +1986,7 @@ if __name__ == "__main__":
     _tlog("server.starting", {"version": VERSION, "model": MODEL, "port": PORT})
     print(f"\n🧠 RAPP Brainstem v{VERSION} starting on http://localhost:{PORT}")
     # If auth is already available (gh CLI / env / cached token), fetch the real
-    # catalog now so MODEL reflects the auto-selected Sonnet in the banner below.
+    # catalog now so MODEL reflects the auto-selected Haiku in the banner below.
     # get_copilot_token() is non-interactive here (raises instead of prompting),
     # so this never blocks startup.
     try:

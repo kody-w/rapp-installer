@@ -1172,8 +1172,12 @@
       const statusText = document.getElementById('status-text');
 
       if (d.status === 'ok') {
-        dot.className = d.copilot === '\u2713' ? 'dot' : 'dot pending';
-        statusText.textContent = d.copilot === '\u2713' ? 'connected' : 'connecting...';
+        // Authed = connected. The copilot session cache being cold just means
+        // the next /chat does a lazy token exchange \u2014 the user is NOT
+        // disconnected, so never show "connecting..." here. Only a bounced
+        // call (catch below / chat network error) flips the state.
+        dot.className = 'dot';
+        statusText.textContent = 'connected';
         statusText.style.cursor = 'pointer';
         statusText.title = 'Click to switch account';
         statusText.onclick = () => { if (confirm('Switch GitHub account?')) switchAccount(); };
@@ -1205,8 +1209,15 @@
       document.getElementById('status-text').textContent = 'offline';
     }
   }
-  // Start with yellow dot (checking)
-  document.getElementById('dot').className = 'dot pending';
+  // Bias to connected: if this browser has authed before, assume connected
+  // from the first paint — checkHealth corrects within one poll if the
+  // server is actually down. Only never-authed browsers start at "checking".
+  if (localStorage.getItem('brainstem_auth')) {
+    document.getElementById('dot').className = 'dot';
+    document.getElementById('status-text').textContent = 'connected';
+  } else {
+    document.getElementById('dot').className = 'dot pending';
+  }
   checkHealth();
   healthInterval = setInterval(checkHealth, 5000);
 
@@ -2038,6 +2049,11 @@
     } catch (err) {
       removeTyping();
       clog('chat.network_error', { error: err.message });
+      // A completely bounced call is the ONE signal that we're not connected.
+      document.getElementById('dot').className = 'dot offline';
+      document.getElementById('status-text').textContent = 'not connected';
+      if (healthInterval) clearInterval(healthInterval);
+      healthInterval = setInterval(checkHealth, 5000);
       const wrap = appendMsg('system', '');
       wrap.querySelector('.bubble').innerHTML =
         `Could not reach brainstem: ${err.message}<br><a href="#" onclick="shareWithAdmin(); return false;" style="color:#f0883e;font-size:12px">🆘 Share with admin for help</a>`;
