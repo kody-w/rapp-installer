@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-RAPP Installer is the single entry point for the RAPP (Rapid Agent Prototyping Platform) — a progressive AI agent platform that teaches the Microsoft AI stack through three tiers. The repo contains the brainstem server, install scripts, Azure deployment templates, a Power Platform solution, and a landing page.
+RAPP Installer is the single entry point for the RAPP (Rapid Agent Prototype Platform) — a progressive AI agent platform that teaches the Microsoft AI stack through three tiers. The repo contains the brainstem server, install scripts, Azure deployment templates, a Power Platform solution, and a landing page.
 
 Philosophy: "engine, not experience" — this is infrastructure, not a consumer product. See `CONSTITUTION.md` for scope rules and governance.
 

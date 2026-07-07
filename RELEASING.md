@@ -170,6 +170,52 @@ Tags make every past release reinstallable forever. That is the safety net that
 makes shipping polish low-fear: the worst bad push costs one `git revert` plus a
 few minutes, not the product.
 
+## 9. Downstream: the aibast pre-release channel
+
+This repo is the **pre-release channel** for
+[microsoft/aibast-agents-library](https://github.com/microsoft/aibast-agents-library).
+That repo is the hardened, Microsoft-branded distribution: it wraps this brainstem
+in 100+ one-click industry agents, the `rapp_ai/` Azure Function tier, an
+auto-built `registry.json`, and Microsoft's OSS compliance layer. We ship here
+first — where the preflight gate and tags live — and the brainstem flows
+downstream on our schedule.
+
+**The channel is strictly one-way and tag-driven.** aibast consumes tagged
+releases (`brainstem-vX.Y.Z`), never `main`-tip. Nothing from aibast flows back:
+its industry stacks, `rapp_ai/`, registry, README/index.html/CLAUDE.md, and
+compliance files are downstream-owned and this repo never carries them.
+
+The divergence between the two repos is exactly three layers, so the sync is
+mechanical (see `tools/aibast.manifest`):
+
+| Layer | What | Sync behavior |
+|-------|------|---------------|
+| 1. Shared core | `rapp_brainstem/`, root installers, `deploy.*`, `azuredeploy.json`, `community_rapp/`, `blog.html`, `release-notes.html`, `skill.md`, installer tests | copied verbatim |
+| 2. Mechanical rewrite | two URL stems: `kody-w/rapp-installer` → `microsoft/aibast-agents-library` and the `.github.io` Pages host | `sed` rewrite on every synced file |
+| 3. Downstream-only | industry stacks, `rapp_ai/`, `registry.json`, compliance files, aibast's README/index.html/CLAUDE.md, AIBAST disclaimers | **never touched** — drift is reported, not overwritten |
+
+Deltas that the rewrite can't express (e.g. aibast's Tier-2 installer cloning
+`rapp_ai/` instead of `CommunityRAPP`) live as patches in the **downstream**
+checkout at `.sync/patches/*.patch`; the sync re-applies them and fails loudly
+if one no longer applies.
+
+To cut a downstream sync after tagging a release here:
+
+```bash
+git checkout brainstem-vX.Y.Z                 # the channel ships tags, not tip
+tools/sync-to-aibast.sh /path/to/aibast-agents-library
+# inspect `git status` in the target, then in that checkout:
+cd /path/to/aibast-agents-library
+git checkout -b sync/brainstem-vX.Y.Z
+bash tests/test_installer.sh && (cd rapp_brainstem && python3 -m pytest -q)
+git commit -am "sync: brainstem vX.Y.Z from rapp-installer"
+git push -u origin sync/brainstem-vX.Y.Z      # push to a fork; open a PR upstream
+```
+
+The script regenerates aibast's `docs/` Pages mirrors from the just-synced
+installers and guards that no `kody-w/rapp-installer` reference survives the
+rewrite — the two failure modes that have bitten past hand-built syncs.
+
 ## Why this works
 
 - **The test artifact is the production artifact.** Preflight never tests a copy of
