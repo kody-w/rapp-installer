@@ -21,6 +21,12 @@ Point it at a folder of BasicAgent ``*.py`` files (a "stack") and it:
   5. publishes every bot — CHILDREN first, ORCHESTRATOR last (a connected-
      agent root cannot publish until its invoked sub-agents are published;
      wrong order 409s)
+  6. TESTS the live agent over a Direct Line connection (default when
+     publishing): flips the orchestrator to 'No authentication' pre-publish,
+     derives the environment's anonymous Direct Line token endpoint, opens a
+     conversation, sends test_message, and reports the agent's actual reply —
+     evidence the deployment answers, not just that the import succeeded.
+     Pass test=false to skip (and keep the orchestrator's authentication).
 
 Also accepts a prebuilt connected-solution zip (``solution_zip``) and deploys
 it the same way, recovering bot schemas / workflow ids / publish order from
@@ -322,6 +328,124 @@ def _publish_connected(bot_schemas, resource, token):
 
 
 # --------------------------------------------------------------------------- #
+# post-deploy Direct Line smoke test                                          #
+# --------------------------------------------------------------------------- #
+
+_DL_BASE = "https://directline.botframework.com/v3/directline"
+
+
+def _environment_id(resource, token):
+    """Power Platform environment id of the Dataverse org (needed to derive the
+    per-environment Direct Line token endpoint)."""
+    code, r = _dataverse_action(
+        resource, token,
+        "RetrieveCurrentOrganization(AccessType=Microsoft.Dynamics.CRM.EndpointAccessType'Default')",
+        method="GET")
+    if code == 200 and isinstance(r, dict):
+        return (r.get("Detail") or {}).get("EnvironmentId")
+    return None
+
+
+def _directline_token_endpoint(environment_id, schema):
+    """Copilot Studio no-auth Direct Line token endpoint: environment id minus
+    hyphens with a dot before the last 2 chars becomes the island hostname."""
+    s = re.sub(r"[^0-9a-fA-F]", "", environment_id or "")
+    if len(s) < 4:
+        return None
+    return ("https://%s.%s.environment.api.powerplatform.com/powervirtualagents/"
+            "botsbyschema/%s/directline/token?api-version=2022-03-01-preview"
+            % (s[:-2], s[-2:], schema))
+
+
+def _set_bot_auth_none(resource, token, botid):
+    """PATCH the bot to Authentication = 'No authentication': authenticationmode
+    1 AND authenticationtrigger 0 (trigger=Always still demands sign-in and fails
+    Direct Line with IntegratedAuthenticationNotSupportedInChannel). Packaged
+    bots ship with Integrated auth (mode 2), which the anonymous token endpoint
+    refuses — and the flip must cover EVERY bot in the solution, because a
+    no-auth orchestrator invoking Integrated-auth children fails at runtime with
+    ConnectedAgentAuthMismatch."""
+    code, r = _http(resource.rstrip("/") + _API + "bots(%s)" % botid,
+                    data=json.dumps({"authenticationmode": 1,
+                                     "authenticationtrigger": 0}).encode(),
+                    headers={"Authorization": "Bearer " + token,
+                             "Content-Type": "application/json",
+                             "Accept": "application/json", "If-Match": "*"},
+                    method="PATCH")
+    return code in (200, 204), None if code in (200, 204) else str(r)[:200]
+
+
+def _directline_smoke_test(token_endpoint, message, timeout_seconds=240):
+    """Prove the deployed agent actually answers: mint a Direct Line token from
+    the bot's token endpoint (polling — publish propagation lags PvaPublish by up
+    to a couple of minutes), start a conversation, POST the message, poll
+    activities until the bot goes quiet, return the last (complete) reply."""
+    deadline = time.time() + max(60, int(timeout_seconds))
+    dl_token, last_err = None, "no attempt"
+    while time.time() < deadline:
+        code, r = _http(token_endpoint, method="GET", timeout=30)
+        if code == 200 and isinstance(r, dict) and r.get("token"):
+            dl_token = r["token"]
+            break
+        last_err = "token endpoint HTTP %s: %s" % (code, str(r)[:200])
+        time.sleep(10)
+    if not dl_token:
+        return {"status": "test_failed", "step": "token",
+                "token_endpoint": token_endpoint, "error": last_err,
+                "hint": ("The token endpoint answers only for a PUBLISHED bot with "
+                         "Authentication = 'No authentication'.")}
+    code, r = _http(_DL_BASE + "/conversations", data=b"",
+                    headers={"Authorization": "Bearer " + dl_token}, method="POST")
+    if code not in (200, 201) or not isinstance(r, dict) or not r.get("conversationId"):
+        return {"status": "test_failed", "step": "conversation",
+                "error": "start conversation HTTP %s: %s" % (code, str(r)[:200])}
+    conv = r["conversationId"]
+    dl_token = r.get("token") or dl_token
+    sender = "rapp-deploy-tester"
+    # NB: _http form-encodes plain dicts (the OAuth convention) — Direct Line
+    # activities must be JSON, so encode explicitly.
+    code, r = _http(_DL_BASE + "/conversations/%s/activities" % conv,
+                    data=json.dumps({"type": "message", "from": {"id": sender},
+                                     "text": message}).encode(),
+                    headers={"Authorization": "Bearer " + dl_token,
+                             "Content-Type": "application/json"}, method="POST")
+    if code not in (200, 201):
+        return {"status": "test_failed", "step": "send",
+                "error": "send activity HTTP %s: %s" % (code, str(r)[:200])}
+    replies, watermark, last_new = [], None, time.time()
+    while time.time() < deadline:
+        url = _DL_BASE + "/conversations/%s/activities" % conv \
+            + (("?watermark=" + watermark) if watermark else "")
+        code, r = _http(url, headers={"Authorization": "Bearer " + dl_token})
+        if code == 200 and isinstance(r, dict):
+            watermark = r.get("watermark") or watermark
+            for a in r.get("activities", []):
+                frm = a.get("from") or {}
+                # Only BOT messages count: Direct Line echoes the user's own
+                # activity back (sometimes with a rewritten from.id), so filter
+                # on role and drop anything matching the sent text.
+                if (a.get("type") == "message" and a.get("text")
+                        and frm.get("id") != sender
+                        and str(frm.get("role") or "bot").lower() != "user"
+                        and a["text"].strip() != message.strip()):
+                    replies.append(a["text"])
+                    last_new = time.time()
+        # Copilot Studio streams partial messages; once the bot has been quiet
+        # for a few seconds the LAST message is the complete reply. Connected-
+        # agent routing to a child can take a while for the FIRST message, so
+        # the quiet rule only applies after something has arrived.
+        if replies and time.time() - last_new > 8:
+            break
+        time.sleep(3)
+    if not replies:
+        return {"status": "test_failed", "step": "reply",
+                "conversation_id": conv,
+                "error": "no bot reply within the test window"}
+    return {"status": "passed", "question": message, "reply": replies[-1][:1500],
+            "conversation_id": conv, "token_endpoint": token_endpoint}
+
+
+# --------------------------------------------------------------------------- #
 # packaging: delegate the folder -> solution-zip step to the pipeline packager #
 # --------------------------------------------------------------------------- #
 
@@ -516,6 +640,18 @@ class CopilotStudioDeployAgent(BasicAgent):
                         "type": "boolean",
                         "description": "Pass OverwriteUnmanagedCustomizations=true on import (overwrites unmanaged layers of existing components). Default false — the safer choice for shared environments.",
                     },
+                    "test": {
+                        "type": "boolean",
+                        "description": "If true (default when publish is true), verify the deployed agent end-to-end over a Direct Line connection after publish: send test_message to the orchestrator and report its actual reply. NOTE: this sets the orchestrator's Authentication to 'No authentication' before publishing (required for the anonymous Direct Line token endpoint) — set test=false to leave authentication untouched.",
+                    },
+                    "test_message": {
+                        "type": "string",
+                        "description": "The message sent to the deployed orchestrator during the Direct Line test. Default: 'Hello! Briefly introduce yourself and list what you can help with.' Pick something that exercises routing to a sub-agent to prove the connected topology.",
+                    },
+                    "test_timeout_seconds": {
+                        "type": "integer",
+                        "description": "Total budget for the Direct Line test, including waiting for publish to propagate to the token endpoint. Default 240.",
+                    },
                 },
                 "required": [],
             },
@@ -605,8 +741,39 @@ class CopilotStudioDeployAgent(BasicAgent):
             activated = _activate_flows(resource, token, workflow_ids)
             nact = sum(1 for a in activated if a.get("status") == "activated")
             npend = sum(1 for a in activated if a.get("status") == "pending_connection")
+            # Direct Line test needs the orchestrator on 'No authentication', and
+            # the flip must land BEFORE publish so the published config carries it.
+            test = bool(kwargs.get("test", True)) and publish and bool(bot_schemas)
+            test_result = None
+            if test:
+                # EVERY bot in the solution goes no-auth, not just the root — a
+                # no-auth orchestrator invoking Integrated-auth children fails
+                # with ConnectedAgentAuthMismatch.
+                for schema in bot_schemas:
+                    botid = _find_botid(resource, token, schema)
+                    ok_auth, auth_err = (_set_bot_auth_none(resource, token, botid)
+                                         if botid else (False, "bot %s not found" % schema))
+                    if not ok_auth:
+                        test_result = {"status": "test_failed", "step": "auth_mode",
+                                       "error": "%s: %s" % (schema, auth_err)}
+                        test = False
+                        break
             published = _publish_connected(bot_schemas, resource, token) if publish else []
             npub = sum(1 for p in published if p.get("status") in ("published", "publish_requested"))
+
+            # ---- 6. Direct Line smoke test against the LIVE published agent ----
+            if test:
+                env_id = _environment_id(resource, token)
+                endpoint_url = _directline_token_endpoint(env_id, bot_schemas[0])
+                if not endpoint_url:
+                    test_result = {"status": "test_failed", "step": "environment",
+                                   "error": "could not resolve the environment id for the Direct Line token endpoint"}
+                else:
+                    test_result = _directline_smoke_test(
+                        endpoint_url,
+                        kwargs.get("test_message")
+                        or "Hello! Briefly introduce yourself and list what you can help with.",
+                        kwargs.get("test_timeout_seconds") or 240)
 
             errors = []
             for a in activated:
@@ -617,6 +784,9 @@ class CopilotStudioDeployAgent(BasicAgent):
                 if p.get("status") in ("publish_failed", "not_found"):
                     errors.append("bot %s %s%s" % (p.get("schema"), p.get("status"),
                                                    (": " + str(p.get("error"))[:120]) if p.get("error") else ""))
+            if test_result and test_result.get("status") != "passed":
+                errors.append("direct-line test %s: %s"
+                              % (test_result.get("step", "?"), str(test_result.get("error", ""))[:160]))
 
             summary = (built + " Imported into " + resource + ", "
                        + (("activated %d/%d flows, " % (nact, len(activated))) if activated else "")
@@ -626,6 +796,9 @@ class CopilotStudioDeployAgent(BasicAgent):
                           else "left unpublished for review in Copilot Studio. ")
                        + "Open https://copilotstudio.microsoft.com, pick that environment, open '"
                        + str(display)[:42] + "' and use the Test pane.")
+            if test_result and test_result.get("status") == "passed":
+                summary += (" Direct Line test PASSED — asked %r, the live agent replied: %r"
+                            % (test_result["question"][:80], test_result["reply"][:220]))
             if errors:
                 summary += (" %d step(s) FAILED — " % len(errors)) + "; ".join(errors)
             return self._result("success" if not errors else "partial", summary, {
@@ -636,6 +809,7 @@ class CopilotStudioDeployAgent(BasicAgent):
                 "publish_enabled": publish,
                 "flows_activated": activated,
                 "published": published,
+                "directline_test": test_result,
                 "errors": errors,
                 "test_in_studio": "https://copilotstudio.microsoft.com",
             })
@@ -659,6 +833,8 @@ def main():
     kwargs["dry_run"] = "--dry-run" in sys.argv
     if "--no-publish" in sys.argv:
         kwargs["publish"] = False
+    if "--no-test" in sys.argv:
+        kwargs["test"] = False
     print(json.dumps(CopilotStudioDeployAgent().perform(**kwargs), indent=2, default=str))
 
 
