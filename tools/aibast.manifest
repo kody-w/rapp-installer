@@ -1,0 +1,49 @@
+# aibast.manifest — what flows from this repo (upstream, pre-release) into
+# microsoft/aibast-agents-library (downstream, hardened release), and how.
+# Consumed by tools/sync-to-aibast.sh. One directive per line.
+#
+#   verbatim <path>            copy byte-for-byte (dirs sync with --delete), then rewrite
+#   binary   <path>            copy byte-for-byte, never rewritten
+#   mirror   <dst> <src>       regenerate a docs/ Pages mirror from a root file, in the TARGET
+#   rewrite  <from> <to>       ordered string rewrites applied to every synced text file
+#   report   <path>            downstream-owned; never touched — print upstream drift only
+#
+# Everything not named here is downstream-owned and never touched:
+# agents/ (industry stacks), rapp_ai/, registry.json + build_registry.py,
+# .github/, README.md, index.html, CLAUDE.md, LICENSE, SECURITY.md,
+# CONTRIBUTING.md, tools/, and the downstream tests/ additions.
+
+# ---- Layer 1: shared core (upstream is the source of truth) ----
+verbatim rapp_brainstem/
+verbatim community_rapp/
+verbatim install.sh
+verbatim install.ps1
+verbatim install.cmd
+verbatim install.command
+verbatim deploy.sh
+verbatim deploy.ps1
+verbatim azuredeploy.json
+verbatim blog.html
+verbatim release-notes.html
+verbatim skill.md
+verbatim tests/preflight_local.sh
+verbatim tests/test_installer.sh
+binary   MSFTAIBASMultiAgentCopilot_1_0_0_5.zip
+
+# ---- Pages mirrors: regenerated from the just-synced roots, never hand-edited ----
+mirror docs/install.sh      install.sh
+mirror docs/install.ps1     install.ps1
+mirror docs/install.cmd     install.cmd
+mirror docs/install.command install.command
+
+# ---- Layer 2: mechanical rewrite (order matters — Pages URL first) ----
+rewrite kody-w.github.io/rapp-installer microsoft.github.io/aibast-agents-library
+rewrite kody-w/rapp-installer microsoft/aibast-agents-library
+
+# ---- Layer 3: downstream-owned files with an upstream counterpart ----
+# (sync never touches these; it prints the drift so a human can decide)
+report README.md
+report index.html
+report CLAUDE.md
+report docs/index.html
+report docs/tutorial.html
