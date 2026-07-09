@@ -1221,6 +1221,15 @@ def load_agents():
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
+# Surfaced verbatim to the user whenever a generation times out even after one
+# retry. The raw urllib3 "HTTPSConnectionPool(host=...): Read timed out" text must
+# never reach the chat UI — this human sentence takes its place.
+_TIMEOUT_USER_MSG = (
+    "The model took too long to answer and the request timed out twice. "
+    "Try again, ask for something shorter, or switch to a faster model from the picker."
+)
+
+
 def call_copilot(messages, tools=None):
     """Call the Copilot chat completions API."""
     copilot_token, endpoint = get_copilot_token()
@@ -1243,7 +1252,21 @@ def call_copilot(messages, tools=None):
 
     print(f"[brainstem] API call: model={MODEL}, tools={len(tools) if tools else 0}, tool_choice={body.get('tool_choice', 'NONE')}")
 
-    resp = requests.post(url, headers=headers, json=body, timeout=60)
+    # (connect, read) timeouts: fail fast if we can't even reach the endpoint, but
+    # give a long generation room to finish. A single read timeout is often a
+    # transient hiccup or a cold model, so retry ONCE (mirroring the 401 path) before
+    # giving up — and never let the raw urllib3 timeout text escape to the user.
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+    except requests.exceptions.Timeout:
+        _tlog("api.timeout_retry", {"model": MODEL}, level="warn")
+        print("[brainstem] Copilot request timed out — retrying once")
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+        except requests.exceptions.Timeout as e:
+            _tlog("api.timeout", {"model": MODEL, "detail": str(e)[:300]}, level="error")
+            print(f"[brainstem] Copilot request timed out again, giving up: {e}")
+            raise RuntimeError(_TIMEOUT_USER_MSG)
 
     # A cached Copilot token can be rejected server-side (401) before its local
     # expiry elapses — early revocation, clock skew, or a session file carried over
@@ -1502,6 +1525,14 @@ def chat():
             "model": MODEL,
             "detail": detail
         }), 502
+
+    except requests.exceptions.Timeout:
+        # A read/connect timeout escaped call_copilot's own retry (e.g. from a
+        # fallback-model attempt). Surface the same clean sentence rather than the
+        # raw "HTTPSConnectionPool ... Read timed out" text the user reported seeing.
+        traceback.print_exc()
+        _tlog("chat.error", {"model": MODEL, "error": "timeout"}, level="error")
+        return jsonify({"error": _TIMEOUT_USER_MSG, "model": MODEL}), 500
 
     except Exception as e:
         traceback.print_exc()
