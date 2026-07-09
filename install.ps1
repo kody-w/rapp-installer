@@ -18,6 +18,20 @@ $BRAINSTEM_HOME = "$env:USERPROFILE\.brainstem"
 $BRAINSTEM_BIN = "$env:USERPROFILE\.local\bin"
 $REPO_URL = "https://github.com/kody-w/rapp-installer.git"
 $REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
+$VENV_DIR = "$env:USERPROFILE\.brainstem\venv"
+
+# Optional version pin: `--version vX.Y.Z` (also accepts a bare 0.6.14 or the release
+# tag form brainstem-v0.6.14). Parsed from the script arguments so a user can pin or
+# RC-test a specific release on Windows, e.g.
+#   & ([scriptblock]::Create((irm https://.../install.ps1))) --version v0.6.14
+$PIN_VERSION = ""
+$argList = @($args)
+for ($i = 0; $i -lt $argList.Count; $i++) {
+    if ($argList[$i] -eq "--version" -and ($i + 1) -lt $argList.Count) {
+        $PIN_VERSION = [string]$argList[$i + 1]
+        $i++
+    }
+}
 
 function Print-Banner {
     Write-Host ""
@@ -105,6 +119,20 @@ function Resolve-PythonExe {
     return "python"
 }
 
+function Get-VenvPython {
+    # Path to the venv interpreter (Windows layout: venv\Scripts\python.exe).
+    return "$VENV_DIR\Scripts\python.exe"
+}
+
+function Resolve-RunPython {
+    # The interpreter used to install deps, check deps, and launch the server: the
+    # venv python when it exists (issue #29 — install and launch must resolve the
+    # SAME interpreter), otherwise the system python as a safe fallback.
+    $venvPy = Get-VenvPython
+    if (Test-Path $venvPy) { return $venvPy }
+    return (Resolve-PythonExe)
+}
+
 function Test-PipWorks {
     param([string]$Py)
     $prev = $ErrorActionPreference
@@ -168,6 +196,51 @@ function Ensure-Pip {
     Write-Host "        `"$py`" -m ensurepip --upgrade --default-pip" -ForegroundColor Cyan
     Write-Host "      Or reinstall Python from https://python.org with 'pip' checked." -ForegroundColor Yellow
     return $false
+}
+
+function Setup-Venv {
+    # Create ~/.brainstem/venv so dependencies are isolated from system/user Python
+    # and the launcher always resolves the SAME interpreter that install used
+    # (issue #29). Idempotent: a healthy existing venv is reused; a broken one is
+    # recreated. Mirrors install.sh's setup_venv.
+    $venvPy = Get-VenvPython
+    if (Test-Path $venvPy) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $venvPy -c "import sys" 2>&1 | Out-Null
+        $ok = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prev
+        if ($ok) {
+            Write-Host "  [OK] Virtual environment OK" -ForegroundColor Green
+            return
+        }
+        Write-Host "  [..] Virtual environment broken — recreating..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $VENV_DIR -ErrorAction SilentlyContinue
+    }
+
+    $sysPy = Resolve-PythonExe
+    Write-Host "  Creating virtual environment..."
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
+    if (-not (Test-Path (Get-VenvPython))) {
+        # Some minimal Python installs need ensurepip primed before venv works.
+        & $sysPy -m ensurepip --upgrade 2>&1 | Out-Null
+        & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
+    }
+    $ErrorActionPreference = $prev
+
+    if (-not (Test-Path (Get-VenvPython))) {
+        Write-Host "  [X] Failed to create virtual environment at $VENV_DIR" -ForegroundColor Red
+        throw "venv creation failed"
+    }
+
+    # Upgrade pip inside the venv (best-effort; venv already ships pip).
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & (Get-VenvPython) -m pip install --upgrade pip 2>&1 | Out-Null
+    $ErrorActionPreference = $prev
+    Write-Host "  [OK] Virtual environment ready" -ForegroundColor Green
 }
 
 function Check-Prerequisites {
@@ -344,6 +417,23 @@ function Test-SoulHashInManifest {
     return $false
 }
 
+function Resolve-PinnedTag {
+    # Resolve a --version pin against every tag form we ship: the documented v0.6.14
+    # UX, a bare 0.6.14, and the actual release tag brainstem-v0.6.14. Returns the
+    # matching git ref, or $null. Assumes the current directory is the repo.
+    param([string]$Pin)
+    $bare = $Pin -replace '^v', ''
+    foreach ($cand in @($Pin, "v$bare", "brainstem-$bare", "brainstem-v$bare")) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        git rev-parse $cand 2>&1 | Out-Null
+        $ok = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prev
+        if ($ok) { return $cand }
+    }
+    return $null
+}
+
 function Install-Brainstem {
     Write-Host ""
     Write-Host "Installing RAPP Brainstem..."
@@ -357,10 +447,18 @@ function Install-Brainstem {
         $LocalVer = "0.0.0"
         $VerFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
         if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw).Trim() }
-        try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
+        if ($PIN_VERSION) {
+            $RemoteVer = ($PIN_VERSION -replace '^v', '')
+        } else {
+            try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
+        }
 
         Write-Host "  Local:  v$LocalVer"
-        Write-Host "  Remote: v$RemoteVer"
+        if ($PIN_VERSION) {
+            Write-Host "  Target: v$RemoteVer (pinned)"
+        } else {
+            Write-Host "  Remote: v$RemoteVer"
+        }
 
         if ($LocalVer -eq $RemoteVer) {
             Write-Host "  [OK] Already up to date (v$LocalVer)" -ForegroundColor Green
@@ -386,16 +484,40 @@ function Install-Brainstem {
             $prevEAP = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             git remote set-url origin $REPO_URL 2>&1 | Out-Null
-            git fetch --quiet origin main 2>&1 | Out-Null
-            $pullOk = ($LASTEXITCODE -eq 0)
-            if ($pullOk) {
-                git reset --hard --quiet FETCH_HEAD 2>&1 | Out-Null
+            $TagRef = $null
+            if ($PIN_VERSION) {
+                # Pin/RC-test: fetch tags and check out the requested release tag
+                # (accepts v0.6.14 / 0.6.14 / brainstem-v0.6.14 forms like install.sh).
+                git stash 2>&1 | Out-Null
+                git fetch --tags --quiet origin 2>&1 | Out-Null
+                $TagRef = Resolve-PinnedTag $PIN_VERSION
+                $pullOk = $false
+                if ($TagRef) {
+                    git checkout --quiet $TagRef 2>&1 | Out-Null
+                    $pullOk = ($LASTEXITCODE -eq 0)
+                } else {
+                    Write-Host "  [X] Version $PIN_VERSION not found. Available versions:" -ForegroundColor Red
+                    git tag -l 'brainstem-v*' 'v*' 2>&1 | Sort-Object | ForEach-Object { Write-Host "    $_" }
+                }
+            } else {
+                git fetch --quiet origin main 2>&1 | Out-Null
                 $pullOk = ($LASTEXITCODE -eq 0)
+                if ($pullOk) {
+                    git reset --hard --quiet FETCH_HEAD 2>&1 | Out-Null
+                    $pullOk = ($LASTEXITCODE -eq 0)
+                }
             }
             $ErrorActionPreference = $prevEAP
             Pop-Location
+            if ($PIN_VERSION -and -not $TagRef) {
+                throw "pinned version $PIN_VERSION not found"
+            }
             if ($pullOk) {
-                Write-Host "  [OK] Framework updated" -ForegroundColor Green
+                if ($PIN_VERSION) {
+                    Write-Host "  [OK] Checked out $TagRef" -ForegroundColor Green
+                } else {
+                    Write-Host "  [OK] Framework updated" -ForegroundColor Green
+                }
             } else {
                 Write-Host "  [!] Update download failed — keeping existing files (v$LocalVer)" -ForegroundColor Yellow
             }
@@ -414,7 +536,13 @@ function Install-Brainstem {
                     $NewHash = Get-NormalizedSoulHash $SoulFile
                     if ($OldHash -and $NewHash -and ($OldHash -ne $NewHash) -and (Test-SoulHashInManifest $OldHash $Manifest)) {
                         $Bak = "$BRAINSTEM_HOME\src\rapp_brainstem\soul.md.bak-$(Get-Date -Format 'yyyyMMdd')"
-                        Copy-Item "$Backup\soul.md" $Bak -Force
+                        # Don't clobber an earlier same-day backup (a second refresh on the same date).
+                        if (Test-Path $Bak) {
+                            $bn = 1
+                            while (Test-Path "$Bak-$bn") { $bn++ }
+                            $Bak = "$Bak-$bn"
+                        }
+                        Copy-Item "$Backup\soul.md" $Bak
                         Write-Host "  [OK] Refreshed default soul (yours was an unmodified default); backup at $Bak" -ForegroundColor Green
                         $soulRefreshed = $true
                     }
@@ -422,8 +550,16 @@ function Install-Brainstem {
                 if (-not $soulRefreshed) { Copy-Item "$Backup\soul.md" $SoulFile -Force }
             }
             if (Test-Path "$Backup\.env") { Copy-Item "$Backup\.env" $EnvFile -Force }
+            # Only restore genuinely user-added agents. Compute the set the repo now
+            # ships from the fresh checkout and skip-restore anything in it — otherwise
+            # bundled agents (context_memory, manage_memory, hacker_news) get reverted
+            # to the backed-up copies on every upgrade (issue #2).
+            $Shipped = @()
+            if (Test-Path $AgentsDir) {
+                $Shipped = @(Get-ChildItem "$AgentsDir\*.py" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+            }
             Get-ChildItem "$Backup\*.py" -ErrorAction SilentlyContinue | ForEach-Object {
-                if ($_.Name -notin @("basic_agent.py", "__init__.py")) {
+                if (($_.Name -notin @("basic_agent.py", "__init__.py")) -and ($_.Name -notin $Shipped)) {
                     Copy-Item $_.FullName "$AgentsDir\$($_.Name)" -Force
                 }
             }
@@ -439,6 +575,21 @@ function Install-Brainstem {
             }
         }
     } else {
+        # A broken prior install (src present but .git gone) may still hold the user's
+        # soul, .env, custom agents, and memories — none of which are in git. Preserve
+        # them before wiping so a re-run can't silently destroy the user's work
+        # (issue #21). The common case (no existing src) skips all of this.
+        $FreshBackup = $null
+        $srcRapp = "$BRAINSTEM_HOME\src\rapp_brainstem"
+        if (Test-Path $srcRapp) {
+            $FreshBackup = "$env:TEMP\brainstem-fresh-$(Get-Random)"
+            New-Item -ItemType Directory -Force -Path "$FreshBackup\agents" | Out-Null
+            if (Test-Path "$srcRapp\soul.md") { Copy-Item "$srcRapp\soul.md" "$FreshBackup\soul.md" -Force -ErrorAction SilentlyContinue }
+            if (Test-Path "$srcRapp\.env") { Copy-Item "$srcRapp\.env" "$FreshBackup\.env" -Force -ErrorAction SilentlyContinue }
+            if (Test-Path "$srcRapp\agents") { Copy-Item "$srcRapp\agents\*.py" "$FreshBackup\agents\" -Force -ErrorAction SilentlyContinue }
+            if (Test-Path "$srcRapp\.brainstem_data") { Copy-Item "$srcRapp\.brainstem_data" "$FreshBackup\.brainstem_data" -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
         if (Test-Path "$BRAINSTEM_HOME\src") {
             Remove-Item -Recurse -Force "$BRAINSTEM_HOME\src" -ErrorAction SilentlyContinue
         }
@@ -448,17 +599,54 @@ function Install-Brainstem {
             Write-Host "  [X] Failed to clone repository" -ForegroundColor Red
             throw "git clone failed"
         }
+
+        if ($PIN_VERSION) {
+            # Pin/RC-test: check out the requested release tag after cloning
+            # (accepts v0.6.14 / 0.6.14 / brainstem-v0.6.14 forms like install.sh).
+            Push-Location "$BRAINSTEM_HOME\src"
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            git fetch --tags --quiet origin 2>&1 | Out-Null
+            $TagRef = Resolve-PinnedTag $PIN_VERSION
+            if ($TagRef) {
+                git checkout --quiet $TagRef 2>&1 | Out-Null
+            } else {
+                Write-Host "  [X] Version $PIN_VERSION not found. Available versions:" -ForegroundColor Red
+                git tag -l 'brainstem-v*' 'v*' 2>&1 | Sort-Object | ForEach-Object { Write-Host "    $_" }
+            }
+            $ErrorActionPreference = $prevEAP
+            Pop-Location
+            if (-not $TagRef) { throw "pinned version $PIN_VERSION not found" }
+            Write-Host "  [OK] Checked out $TagRef" -ForegroundColor Green
+        }
+
+        # Restore any preserved user files over the fresh checkout.
+        if ($FreshBackup) {
+            $AgentsDir = "$BRAINSTEM_HOME\src\rapp_brainstem\agents"
+            if (Test-Path "$FreshBackup\soul.md") { Copy-Item "$FreshBackup\soul.md" "$BRAINSTEM_HOME\src\rapp_brainstem\soul.md" -Force -ErrorAction SilentlyContinue }
+            if (Test-Path "$FreshBackup\.env") { Copy-Item "$FreshBackup\.env" "$BRAINSTEM_HOME\src\rapp_brainstem\.env" -Force -ErrorAction SilentlyContinue }
+            Get-ChildItem "$FreshBackup\agents\*.py" -ErrorAction SilentlyContinue | ForEach-Object {
+                if ($_.Name -notin @("basic_agent.py", "__init__.py")) {
+                    Copy-Item $_.FullName "$AgentsDir\$($_.Name)" -Force -ErrorAction SilentlyContinue
+                }
+            }
+            if (Test-Path "$FreshBackup\.brainstem_data") { Copy-Item "$FreshBackup\.brainstem_data" "$BRAINSTEM_HOME\src\rapp_brainstem\.brainstem_data" -Recurse -Force -ErrorAction SilentlyContinue }
+            Remove-Item -Recurse -Force $FreshBackup -ErrorAction SilentlyContinue
+            Write-Host "  [OK] Preserved your soul, agents, memories, and config" -ForegroundColor Green
+        }
     }
     Write-Host "  [OK] Source code ready" -ForegroundColor Green
 }
 
 function Run-PipInstall {
     $reqFile = "$BRAINSTEM_HOME\src\rapp_brainstem\requirements.txt"
-    $py = Resolve-PythonExe
-    # Without pip every install below is guaranteed noise — bootstrap it first.
-    # On $false, Ensure-Pip already printed the actionable fix; the dep gates in
-    # Setup-Dependencies / Launch-Brainstem turn that into an honest failure.
-    if (-not (Ensure-Pip)) { return }
+    # Install into the venv (issue #29). The venv created by Setup-Venv already ships
+    # pip; only the rare system-python fallback (no venv) needs pip bootstrapping.
+    $py = Resolve-RunPython
+    if (-not (Test-PipWorks $py)) {
+        if (-not (Ensure-Pip)) { return }
+        $py = Resolve-RunPython
+    }
     # Use the call operator, NOT Start-Process (same reasoning as Check-PythonDeps):
     # the call operator quotes a $reqFile path containing spaces correctly, and it
     # needs no console attachment — Start-Process -NoNewWindow -Wait can block
@@ -470,7 +658,9 @@ function Run-PipInstall {
     $ErrorActionPreference = 'Continue'
     try {
         & $py -m pip install -r $reqFile 2>&1 | ForEach-Object { "$_" }
-        if ($LASTEXITCODE -ne 0) {
+        # `--user` is only valid (and only needed) on the system-python fallback; it
+        # errors inside a venv, so skip it when installing into the venv.
+        if ($LASTEXITCODE -ne 0 -and $py -ne (Get-VenvPython)) {
             & $py -m pip install -r $reqFile --user 2>&1 | ForEach-Object { "$_" }
         }
     } finally {
@@ -479,7 +669,7 @@ function Run-PipInstall {
 }
 
 function Check-PythonDeps {
-    $py = Resolve-PythonExe
+    $py = Resolve-RunPython
     # Use the call operator, NOT Start-Process -ArgumentList. Start-Process joins array
     # arguments with spaces but does not re-quote an element that itself contains spaces,
     # so "-c", "import flask, flask_cors, ..." reached python as the tokens
@@ -523,6 +713,25 @@ function Setup-Dependencies {
     Write-Host "  [OK] Dependencies installed" -ForegroundColor Green
 }
 
+function Ensure-Dependencies {
+    # Quick import check — only run pip when something is actually missing (mirrors
+    # install.sh's ensure_deps; keeps the fast path from hitting PyPI every launch).
+    Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
+    if (Check-PythonDeps) {
+        Pop-Location
+        Write-Host "  [OK] Dependencies verified" -ForegroundColor Green
+        return
+    }
+    Write-Host "  [..] Missing dependencies — installing..." -ForegroundColor Yellow
+    Run-PipInstall
+    $ok = Check-PythonDeps
+    Pop-Location
+    if (-not $ok) {
+        throw "Python dependencies are missing and could not be installed (see messages above)"
+    }
+    Write-Host "  [OK] Dependencies installed" -ForegroundColor Green
+}
+
 function Install-CLI {
     Write-Host ""
     Write-Host "Installing CLI..."
@@ -531,21 +740,29 @@ function Install-CLI {
         New-Item -ItemType Directory -Force -Path $BRAINSTEM_BIN | Out-Null
     }
 
-    # Batch wrapper (works in cmd.exe and PowerShell). Quote the interpreter path —
-    # the direct-path fallback (…\First Last\AppData\…\python.exe) contains spaces and
-    # would otherwise split into a broken command.
-    $py = Resolve-PythonExe
+    # Wrappers launch the venv interpreter (issue #29) so `brainstem` always runs the
+    # same Python that install set up; if the venv is ever missing they fall back to
+    # the system Python captured here. Quote every interpreter path — the direct-path
+    # fallback (…\First Last\AppData\…\python.exe) contains spaces.
+    $venvPy = Get-VenvPython
+    $sysPy = Resolve-PythonExe
+    # Batch wrapper (works in cmd.exe and PowerShell). A goto (not an if/else block)
+    # avoids cmd.exe mis-parsing a path that happens to contain a parenthesis.
     $cmdContent = @"
 @echo off
 cd /d "$BRAINSTEM_HOME\src\rapp_brainstem"
-"$py" brainstem.py %*
+if exist "$venvPy" goto RAPP_VENV
+"$sysPy" brainstem.py %*
+goto :eof
+:RAPP_VENV
+"$venvPy" brainstem.py %*
 "@
     Set-Content -Path "$BRAINSTEM_BIN\brainstem.cmd" -Value $cmdContent
 
     # PowerShell wrapper
     $psContent = @"
 Set-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
-& "$py" brainstem.py @args
+if (Test-Path "$venvPy") { & "$venvPy" brainstem.py @args } else { & "$sysPy" brainstem.py @args }
 "@
     Set-Content -Path "$BRAINSTEM_BIN\brainstem.ps1" -Value $psContent
 
@@ -570,7 +787,8 @@ function Create-Env {
 
 function Launch-Brainstem {
     # Refresh from this installer's repo before launching (no-op if already current).
-    if (Test-Path "$BRAINSTEM_HOME\src\.git") {
+    # Skip when a version is pinned — pulling main would move off the pinned tag.
+    if ((-not $PIN_VERSION) -and (Test-Path "$BRAINSTEM_HOME\src\.git")) {
         Push-Location "$BRAINSTEM_HOME\src"
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -719,6 +937,24 @@ function Launch-Brainstem {
 
     Push-Location "$BRAINSTEM_HOME\src\rapp_brainstem"
 
+    # Free port 7071 before launching — an upgrade must not leave the OLD server
+    # running, or the health poll below would pass against it and report a false
+    # success while the new code never actually binds the port. Guarded for the
+    # absence of Get-NetTCPConnection (older/Server SKUs).
+    try {
+        $listeners = Get-NetTCPConnection -LocalPort 7071 -State Listen -ErrorAction SilentlyContinue
+        if ($listeners) {
+            $ownerPids = @($listeners | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique)
+            foreach ($ownerPid in $ownerPids) {
+                if ($ownerPid -and $ownerPid -ne 0) {
+                    Write-Host "  [!] Stopping existing server (PID $ownerPid)..." -ForegroundColor Yellow
+                    Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Start-Sleep -Seconds 1
+        }
+    } catch {}
+
     # Open the browser once the server actually answers (#14) — a fixed delay
     # races cold startups and lands the user on a dead-port error page. Poll
     # /health, then open; after 60s open anyway so the user still gets the tab.
@@ -734,18 +970,31 @@ function Launch-Brainstem {
         Start-Process "http://localhost:7071"
     } | Out-Null
 
-    $py = Resolve-PythonExe
+    $py = Resolve-RunPython
     & $py brainstem.py
 }
 
 function Main {
     Print-Banner
 
-    # Check if this is an upgrade of an existing install
-    if (Test-Path "$BRAINSTEM_HOME\src\.git") {
+    if ($PIN_VERSION) {
+        Write-Host "  Pinning to version: $PIN_VERSION" -ForegroundColor Cyan
+        Write-Host ""
+    }
+
+    # Check if this is an upgrade of an existing install. Skip the fast path when a
+    # version is pinned — Install-Brainstem must run to check out the requested tag.
+    if ((-not $PIN_VERSION) -and (Test-Path "$BRAINSTEM_HOME\src\.git")) {
         Write-Host "Checking for updates..."
         if (-not (Check-ForUpgrade)) {
-            # Already up to date — just launch
+            # Already up to date — still re-heal the environment before launching,
+            # exactly like install.sh's fast path: verify prerequisites, the venv and
+            # deps, rewrite the CLI wrappers, and restore a missing .env (issues #9, #3).
+            Check-Prerequisites
+            Setup-Venv
+            Ensure-Dependencies
+            Install-CLI
+            Create-Env
             Launch-Brainstem
             return
         }
@@ -753,6 +1002,9 @@ function Main {
 
     Check-Prerequisites
     Install-Brainstem
+    # Create the venv before the CLI wrappers (which point at it) and before deps
+    # (which install into it) so install and launch share one interpreter (issue #29).
+    Setup-Venv
     # CLI wrappers and .env before dependencies: they are cheap, offline-safe and
     # idempotent. If Setup-Dependencies throws, VERSION already matches remote, so
     # a re-run takes the fast path and would otherwise never come back for them.

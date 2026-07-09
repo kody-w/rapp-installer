@@ -262,6 +262,12 @@ maybe_refresh_soul() {
     [ -n "$newhash" ] && [ "$oldhash" != "$newhash" ] || return 1
 
     local bak="$src_dir/soul.md.bak-$(date +%Y%m%d)"
+    # Don't clobber an earlier same-day backup (a second refresh on the same date).
+    if [ -e "$bak" ]; then
+        local n=1
+        while [ -e "${bak}-${n}" ]; do n=$((n+1)); done
+        bak="${bak}-${n}"
+    fi
     cp "$old" "$bak" 2>/dev/null || return 1
     echo -e "  ${GREEN}✓${NC} Refreshed default soul (yours was an unmodified default); backup at ${bak}"
     return 0
@@ -275,6 +281,7 @@ install_brainstem() {
     local AGENTS_DIR="$BRAINSTEM_HOME/src/rapp_brainstem/agents"
     local SOUL_FILE="$BRAINSTEM_HOME/src/rapp_brainstem/soul.md"
     local ENV_FILE="$BRAINSTEM_HOME/src/rapp_brainstem/.env"
+    local DATA_DIR="$BRAINSTEM_HOME/src/rapp_brainstem/.brainstem_data"
     local LOCAL_VERSION_FILE="$BRAINSTEM_HOME/src/rapp_brainstem/VERSION"
 
     if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
@@ -346,14 +353,26 @@ install_brainstem() {
             fi
             [ -f "$BACKUP/.env" ] && cp "$BACKUP/.env" "$ENV_FILE"
             if [ -d "$BACKUP/agents" ]; then
-                # Restore user agents that aren't in the repo (custom ones)
+                # Only restore genuinely user-added agents. Compute the set the repo
+                # now ships from the fresh checkout and skip-restore anything in it —
+                # otherwise bundled agents (context_memory, manage_memory, hacker_news)
+                # get reverted to the backed-up copies on every upgrade (issue #2), so
+                # bundled-agent fixes never reach existing users.
+                local SHIPPED=""
+                for shipped_file in "$AGENTS_DIR"/*.py; do
+                    [ -f "$shipped_file" ] || continue
+                    SHIPPED="$SHIPPED $(basename "$shipped_file")"
+                done
                 for agent_file in "$BACKUP/agents"/*.py; do
+                    [ -f "$agent_file" ] || continue
                     local fname=$(basename "$agent_file")
                     # Skip core agents that the repo manages
                     case "$fname" in
                         basic_agent.py|__init__.py) continue ;;
                     esac
-                    # If user has a custom agent, keep it
+                    # Skip anything shipped in the fresh checkout (bundled agents)
+                    case " $SHIPPED " in *" $fname "*) continue ;; esac
+                    # Genuinely user-added agent — keep it
                     cp "$agent_file" "$AGENTS_DIR/$fname"
                 done
                 echo -e "  ${GREEN}✓${NC} Restored custom agents + soul + config"
@@ -376,6 +395,7 @@ install_brainstem() {
             [ -f "$SOUL_FILE" ] && cp "$SOUL_FILE" "$FRESH_BACKUP/soul.md" 2>/dev/null || true
             [ -f "$ENV_FILE" ] && cp "$ENV_FILE" "$FRESH_BACKUP/.env" 2>/dev/null || true
             [ -d "$AGENTS_DIR" ] && cp "$AGENTS_DIR"/*.py "$FRESH_BACKUP/agents/" 2>/dev/null || true
+            [ -d "$DATA_DIR" ] && cp -R "$DATA_DIR" "$FRESH_BACKUP/.brainstem_data" 2>/dev/null || true
         fi
         rm -rf "$BRAINSTEM_HOME/src" 2>/dev/null || true
         git clone --quiet "$REPO_URL" "$BRAINSTEM_HOME/src"
@@ -406,8 +426,9 @@ install_brainstem() {
                 case "$fn" in basic_agent.py|__init__.py) continue ;; esac
                 cp "$af" "$AGENTS_DIR/$fn" 2>/dev/null || true
             done
+            [ -d "$FRESH_BACKUP/.brainstem_data" ] && cp -R "$FRESH_BACKUP/.brainstem_data" "$DATA_DIR" 2>/dev/null || true
             rm -rf "$FRESH_BACKUP"
-            echo -e "  ${GREEN}✓${NC} Preserved your soul, agents, and config"
+            echo -e "  ${GREEN}✓${NC} Preserved your soul, agents, memories, and config"
         fi
     fi
     echo -e "  ${GREEN}✓${NC} Source code ready"
