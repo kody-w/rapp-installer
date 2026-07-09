@@ -247,6 +247,33 @@ class TestChatNoCopilot(_AuthTestBase):
         self.assertEqual(second.get("response"), "pong")
         self.assertNotIn("error", second)
 
+    def test_chat_stream_degrades_without_crashing(self):
+        """The streaming endpoint (/chat/stream — the web UI's default send path)
+        must ALSO survive a no-Copilot account. Streaming was validated against a
+        working-Copilot rig and the onboarding fix was validated on POST /chat, so
+        this seam is exactly what neither suite alone covers. Requirement: the stream
+        opens cleanly (200), emits a well-formed SSE 'error' event — never a crash,
+        never a bogus 'done' with an answer — so the web UI's stream->POST fallback
+        renders the friendly banner instead of streaming a raw error into the chat."""
+        self._write_token()
+        r = self.client.post("/chat/stream", json={"user_input": "hello"})
+        self.assertEqual(r.status_code, 200, "stream must open cleanly, not 500")
+        events = []
+        for line in r.get_data(as_text=True).splitlines():
+            if line.startswith("data:"):
+                try:
+                    events.append(json.loads(line[5:].strip()))
+                except ValueError:
+                    pass
+        types = [e.get("type") for e in events]
+        self.assertIn("error", types, f"no-Copilot stream never reported an error; frames={types}")
+        self.assertNotIn("done", types, "no-Copilot stream must not emit a completed answer")
+        err = next(e for e in events if e.get("type") == "error")
+        # Non-empty error carrying the prefix the client parses on the POST fallback.
+        self.assertTrue(err.get("error"))
+        self.assertTrue(err["error"].startswith("NO_COPILOT_ACCESS:"),
+                        f"stream error should carry the parseable prefix, got: {err['error']!r}")
+
 
 class TestLoginRetry(_AuthTestBase):
 
