@@ -774,6 +774,13 @@
 </head>
 <body>
 
+<div id="copilot-banner" style="display:none;flex-shrink:0;background:#3d2c00;color:#f2cc60;border-bottom:1px solid #7a5c00;padding:10px 16px;font-size:14px;line-height:1.5;text-align:center;z-index:150">
+  <span class="icon" style="vertical-align:middle;margin-right:6px"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 1.75a.25.25 0 00-.44 0L1.7 13.5a.25.25 0 00.22.37h12.16a.25.25 0 00.22-.37L8.22 1.75zM6.9 1.03c.5-.87 1.7-.87 2.2 0l6.09 11.75c.48.83-.12 1.85-1.1 1.85H1.91c-.98 0-1.58-1.02-1.1-1.85L6.9 1.03zM8 5a.75.75 0 01.75.75v3a.75.75 0 01-1.5 0v-3A.75.75 0 018 5zm0 7a1 1 0 100-2 1 1 0 000 2z"/></svg></span>
+  <span id="copilot-banner-text">This GitHub account doesn't have Copilot access yet.</span>
+  <button id="copilot-retry-btn" onclick="retryCopilot()" style="margin-left:10px;background:#f2cc60;color:#3d2c00;border:none;border-radius:5px;padding:4px 12px;font-size:13px;font-weight:600;cursor:pointer">Retry</button>
+  <a href="https://github.com/github-copilot/signup" target="_blank" style="color:#f2cc60;margin-left:10px;text-decoration:underline">Enable Copilot &rarr;</a>
+</div>
+
 <div id="drop-overlay">
   <span class="icon"><svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg></span>
   Drop .py agent file to install
@@ -1167,6 +1174,85 @@
     document.getElementById('login-overlay').style.display = 'none';
   }
 
+  // ── Copilot-access banner ──
+  // The account is signed in but has no Copilot entitlement (yet). Show a persistent,
+  // friendly bar with the ONE action that fixes it: enable Copilot, then Retry. Retry
+  // re-attempts the token exchange with the existing GitHub token — no re-login.
+  function showCopilotBanner(username) {
+    const txt = document.getElementById('copilot-banner-text');
+    if (txt) txt.innerHTML =
+      '<strong>' + (username || 'This GitHub account') + '</strong> doesn\'t have GitHub Copilot access yet. ' +
+      'Enable Copilot on your account, then Retry — no need to sign in again.';
+    const b = document.getElementById('copilot-banner');
+    if (b) b.style.display = 'block';
+  }
+  function hideCopilotBanner() {
+    const b = document.getElementById('copilot-banner');
+    if (b) b.style.display = 'none';
+  }
+  // Re-run the exchange with the existing token. `statusElId` lets the login overlay
+  // reuse this to report into its own status line; defaults to the banner text.
+  async function retryCopilot(statusElId) {
+    const btn = document.getElementById('copilot-retry-btn');
+    const el = document.getElementById(statusElId || 'copilot-banner-text');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    if (el && !statusElId) el.textContent = 'Checking Copilot access…';
+    try {
+      const r = await fetch(`${API}/login/retry`, { method: 'POST' });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        clog('copilot.retry_ok');
+        hideCopilotBanner();
+        localStorage.setItem('brainstem_auth', 'true');
+        checkHealth();
+        return d;
+      }
+      if (d.status === 'no_copilot_access') {
+        clog('copilot.retry_no_access', { username: d.username });
+        if (el) el.innerHTML =
+          '<strong>' + (d.username || 'This account') + '</strong> still has no Copilot access. ' +
+          'Enable it on GitHub, then Retry.';
+      } else {
+        if (el) el.textContent = d.error || 'Still can\'t reach Copilot — try again shortly.';
+      }
+      return d;
+    } catch (e) {
+      if (el) el.textContent = 'Retry failed — check your connection and try again.';
+      return { status: 'error' };
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+    }
+  }
+
+  // Login-overlay variant: shown while the sign-in card is still open. Renders the
+  // no-Copilot message with a Retry that re-exchanges the token just obtained (it is
+  // no longer discarded server-side), plus switch/sign-up as secondary options.
+  function renderNoCopilotOverlay(username, retried) {
+    const el = document.getElementById('login-status');
+    if (!el) return;
+    el.innerHTML =
+      '<strong>' + username + '</strong> doesn\'t have GitHub Copilot access' + (retried ? ' yet' : '') + '. ' +
+      'Enable it on GitHub, then <a href="#" onclick="retryCopilotOverlay(\'' + username + '\'); return false;" style="color:#58a6ff">Retry</a>.' +
+      '<div style="margin-top:6px;font-size:12px">' +
+      '<a href="#" onclick="switchAccount(); return false;" style="color:#8b949e">Switch account</a> · ' +
+      '<a href="https://github.com/github-copilot/signup" target="_blank" style="color:#8b949e">Sign up for Copilot</a></div>';
+  }
+  async function retryCopilotOverlay(username) {
+    const el = document.getElementById('login-status');
+    if (el) el.textContent = 'Checking Copilot access…';
+    const d = await retryCopilot('login-status');
+    if (d && d.status === 'ok') {
+      loginInProgress = false;
+      document.getElementById('login-step2').style.display = 'none';
+      document.getElementById('login-step3').style.display = 'block';
+      setTimeout(hideLoginOverlay, 1200);
+      return;
+    }
+    // retryCopilot already wrote a message into #login-status; re-render with the
+    // full option set so the Retry / switch / sign-up links are always present.
+    renderNoCopilotOverlay((d && d.username) || username, true);
+  }
+
   let healthInterval = null;
 
   async function checkHealth() {
@@ -1190,6 +1276,11 @@
         localStorage.setItem('brainstem_auth', 'true');
         loginInProgress = false;
         clog('health.ok', { copilot: d.copilot, model: d.model });
+        // Signed in to GitHub, but the account has no Copilot entitlement yet.
+        // Keep the dot "connected" (they ARE authed) and show the persistent
+        // enable-Copilot-then-Retry banner instead of a dead end.
+        if (d.copilot === 'no_access') { showCopilotBanner(d.copilot_username); }
+        else { hideCopilotBanner(); }
         loadModels();
         loadAgentsList();
         // Slow down polling once connected
@@ -1200,6 +1291,7 @@
         statusText.textContent = 'sign in';
         statusText.style.cursor = 'pointer';
         statusText.onclick = showLoginOverlay;
+        hideCopilotBanner();
         clog('health.unauthenticated', { status: d.status });
         // Only auto-show overlay on first visit, never if user dismissed it
         if (!localStorage.getItem('brainstem_auth') && !loginInProgress && !loginDismissed) {
@@ -1741,10 +1833,7 @@
         clog('login.poll_error', { error: err });
         if (err.startsWith('NO_COPILOT_ACCESS:')) {
           const username = err.split(':')[1] || 'this account';
-          document.getElementById('login-status').innerHTML =
-            '<strong>' + username + '</strong> doesn\'t have GitHub Copilot access. ' +
-            '<a href="#" onclick="switchAccount(); return false;" style="color:#58a6ff">Switch account</a> or ' +
-            '<a href="https://github.com/github-copilot/signup" target="_blank" style="color:#58a6ff">sign up for Copilot</a>.';
+          renderNoCopilotOverlay(username, false);
         } else {
           document.getElementById('login-status').innerHTML =
             err + ' <a href="#" onclick="startLogin(); return false;" style="color:#58a6ff">Try again</a>';
@@ -2045,13 +2134,17 @@
       if (d.error) {
         clog('chat.error_response', { error: d.error.slice(0, 200) });
         if (d.error.startsWith('NO_COPILOT_ACCESS:')) {
-          const username = d.error.split(':')[1] || 'this account';
+          const username = d.copilot_username || d.error.split(':')[1] || 'this account';
+          // They ARE authenticated — only Copilot entitlement is missing. Surface the
+          // persistent banner (with Retry) and an inline note. Do NOT clear
+          // brainstem_auth: that would bounce them to a misleading "signed out" state.
+          showCopilotBanner(username);
           const wrap = appendMsg('system', '');
           wrap.querySelector('.bubble').innerHTML =
-            `<strong>${username}</strong> doesn't have GitHub Copilot access. ` +
-            `<a href="#" onclick="switchAccount(); return false;" style="color:#58a6ff">Switch account</a> ` +
-            `or <a href="https://github.com/github-copilot/signup" target="_blank" style="color:#58a6ff">sign up for Copilot</a>.`;
-          localStorage.removeItem('brainstem_auth');
+            `<strong>${username}</strong> doesn't have GitHub Copilot access yet. ` +
+            `Enable Copilot on your account, then ` +
+            `<a href="#" onclick="retryCopilot(); return false;" style="color:#58a6ff">Retry</a> — ` +
+            `no need to sign in again.`;
         } else if (d.error.includes('usage limit') || d.error.includes('quota')) {
           const wrap = appendMsg('system', '');
           wrap.querySelector('.bubble').innerHTML =

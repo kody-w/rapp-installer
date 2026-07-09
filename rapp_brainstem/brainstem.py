@@ -550,6 +550,9 @@ def save_github_token(token, refresh_token=None):
     _models_fetched = False
     _default_model_selected = False
     _NO_TOOL_CHOICE_MODELS.clear()
+    # A newly stored token may belong to a different (or newly entitled) account —
+    # forget any prior no-Copilot flag so the next exchange re-evaluates from scratch.
+    _clear_no_copilot()
 
 def refresh_github_token():
     """Try to refresh an expired GitHub token using the stored refresh_token."""
@@ -607,6 +610,24 @@ _copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
 # token). One thread exchanges; the rest re-read the fresh cache.
 _copilot_token_lock = threading.Lock()
 
+# Set when a GitHub->Copilot exchange is rejected with notification_id ==
+# "no_copilot_access": the account signed in fine but has no Copilot entitlement
+# (yet). This is a UI SIGNAL ONLY — it never short-circuits a fresh exchange, so the
+# moment the account gains access the next attempt self-heals. Re-populated at startup
+# by _fetch_copilot_models(), so it survives restarts without a disk file.
+_no_copilot_access = {"username": None, "at": 0}
+
+def _set_no_copilot(username):
+    """Flag that the current GitHub account authenticated but lacks Copilot access."""
+    global _no_copilot_access
+    _no_copilot_access = {"username": username or "this account", "at": time.time()}
+
+def _clear_no_copilot():
+    """Forget the no-Copilot flag (a token exchange succeeded, or the account changed)."""
+    global _no_copilot_access
+    if _no_copilot_access.get("username"):
+        _no_copilot_access = {"username": None, "at": 0}
+
 def _invalidate_copilot_token():
     """Drop the cached Copilot API token (memory + disk) so the next
     get_copilot_token() performs a fresh exchange. Used when the API rejects the
@@ -661,6 +682,7 @@ def _get_copilot_token_locked():
     disk_cache = _load_copilot_cache()
     if disk_cache:
         _copilot_token_cache = disk_cache
+        _clear_no_copilot()
         _tlog("auth.copilot_restored", {"expires_in": int(disk_cache['expires_at'] - time.time())})
         print(f"[brainstem] Copilot token restored from cache (expires in {int(disk_cache['expires_at'] - time.time())}s)")
         return disk_cache["token"], disk_cache["endpoint"]
@@ -696,9 +718,14 @@ def _get_copilot_token_locked():
                 username = detail_msg.split("as ")[-1].rstrip(".") if "as " in detail_msg else "this account"
                 _tlog("auth.no_copilot_access", {"username": username}, level="error")
                 print(f"[brainstem] No Copilot access for {username}")
-                # Delete the bad token so health check shows unauthenticated
-                if os.path.exists(_token_file):
-                    os.remove(_token_file)
+                # KEEP the GitHub token. It authenticated fine and is missing only a
+                # Copilot ENTITLEMENT — not validity. Deleting it (the old behavior)
+                # stranded the instance: once the account gained Copilot there was
+                # nothing left to exchange, so it could never self-heal without a full
+                # re-login. Instead, flag the state as a UI signal and leave the token
+                # in place so the very next attempt does a fresh exchange that just
+                # works the moment access is granted.
+                _set_no_copilot(username)
                 raise RuntimeError(
                     f"NO_COPILOT_ACCESS:{username}"
                 )
@@ -729,6 +756,7 @@ def _get_copilot_token_locked():
         "expires_at": expires_at,
     }
     _save_copilot_cache(copilot_token, endpoint, expires_at)
+    _clear_no_copilot()  # a successful exchange proves entitlement — drop any stale flag
     
     _tlog("auth.copilot_ready", {"expires_in": int(expires_at - time.time()), "endpoint": endpoint})
     print(f"[brainstem] Copilot token refreshed (expires in {int(expires_at - time.time())}s)")
@@ -789,6 +817,7 @@ def start_device_code_login(force_new=False):
     # Clear stale state so the new flow starts completely clean
     _login_result = {}
     _copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
+    _clear_no_copilot()
     if os.path.exists(_copilot_cache_file):
         try:
             os.remove(_copilot_cache_file)
@@ -1534,6 +1563,24 @@ def chat():
         _tlog("chat.error", {"model": MODEL, "error": "timeout"}, level="error")
         return jsonify({"error": _TIMEOUT_USER_MSG, "model": MODEL}), 500
 
+    except RuntimeError as e:
+        # Auth/config problems (raised by get_copilot_token) arrive as RuntimeError.
+        # The no-Copilot case is an expected, user-actionable state — not a server
+        # fault — so surface it as clean, structured JSON (never the raw 403 body) and
+        # keep the "NO_COPILOT_ACCESS:" prefix the web UI already parses.
+        msg = str(e)
+        if msg.startswith("NO_COPILOT_ACCESS:"):
+            username = msg.split(":", 1)[1] or "this account"
+            _tlog("chat.no_copilot_access", {"username": username}, level="warn")
+            return jsonify({
+                "error": msg,
+                "no_copilot_access": True,
+                "copilot_username": username,
+            }), 200
+        traceback.print_exc()
+        _tlog("chat.error", {"error": msg[:200]}, level="error")
+        return jsonify({"error": msg}), 500
+
     except Exception as e:
         traceback.print_exc()
         _tlog("chat.error", {"error": str(e)[:200]}, level="error")
@@ -1598,6 +1645,7 @@ def login_switch():
     _copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
     _pending_login = {}
     _login_result = {}
+    _clear_no_copilot()
     _save_pending_login()
 
     for f in (_token_file, _copilot_cache_file):
@@ -1614,6 +1662,42 @@ def login_switch():
         return jsonify({"status": "ok", **data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/login/retry", methods=["POST"])
+def login_retry():
+    """Re-attempt the Copilot exchange with the EXISTING GitHub token — no re-login.
+
+    This is the single action a user needs after enabling Copilot on an account that
+    previously lacked it. It forces a FRESH exchange (dropping any stale session), so
+    the moment entitlement is granted the instance self-heals — no reinstall, no file
+    deletion, no re-authentication. Returns:
+      {"status": "ok"}                              exchange succeeded
+      {"status": "no_copilot_access", "username"}   still no entitlement
+      {"status": "unauthenticated"}                 no GitHub token at all
+      {"status": "error", "error"}                  transient/other failure
+    """
+    _tlog("auth.retry_requested")
+    if not get_github_token():
+        return jsonify({
+            "status": "unauthenticated",
+            "error": "Not signed in. Sign in with GitHub first.",
+        })
+    _invalidate_copilot_token()  # ignore any cached session; force a fresh exchange
+    try:
+        get_copilot_token()
+        _tlog("auth.retry_ok")
+        return jsonify({"status": "ok"})
+    except RuntimeError as e:
+        err = str(e)
+        if err.startswith("NO_COPILOT_ACCESS:"):
+            username = err.split(":", 1)[1] or "this account"
+            _tlog("auth.retry_no_copilot", {"username": username}, level="warn")
+            return jsonify({"status": "no_copilot_access", "username": username, "error": err})
+        _tlog("auth.retry_failed", {"error": err[:200]}, level="warn")
+        return jsonify({"status": "error", "error": err})
+    except Exception as e:
+        _tlog("auth.retry_error", {"error": str(e)[:200]}, level="error")
+        return jsonify({"status": "error", "error": "Couldn't reach GitHub Copilot. Try again shortly."})
 
 @app.route("/models", methods=["GET"])
 def list_models():
@@ -1880,6 +1964,11 @@ def health():
         if disk_cache:
             copilot_ok = True
 
+    # The account signed in but a prior exchange found no Copilot entitlement. Report
+    # it so the UI can show a persistent "enable Copilot, then Retry" banner instead of
+    # a misleading "unauthenticated" (the user IS authenticated) or a silent dead end.
+    no_copilot = bool(_no_copilot_access.get("username")) and not copilot_ok
+
     if github_token:
         return jsonify({
             "status": "ok",
@@ -1889,7 +1978,8 @@ def health():
             "soul":   SOUL_PATH if soul_ok else "missing",
             "agents": list(agents.keys()),
             "quarantined": _quarantine_snapshot(),
-            "copilot": "\u2713" if copilot_ok else "pending",
+            "copilot": "no_access" if no_copilot else ("\u2713" if copilot_ok else "pending"),
+            "copilot_username": _no_copilot_access.get("username") if no_copilot else None,
             "brainstem_dir": os.path.dirname(os.path.abspath(__file__)),
         })
     else:
