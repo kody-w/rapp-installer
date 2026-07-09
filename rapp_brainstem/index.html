@@ -956,7 +956,7 @@
         <li><strong>Add Agents</strong>: Drag and drop any <code>agent.py</code> file directly onto this window to instantly teach me new things.</li>
       </ul>
       <p><em>Click one of the prompts below to get started!</em></p>
-      <p><button class="starter-btn tour-invite" onclick="startTour()">New here? Take the 5-minute guided tour</button></p>
+      <p class="tour-invite-wrap"><button class="starter-btn tour-invite" onclick="startTour()">New here? Take the 5-minute guided tour</button><button class="tour-invite-hide" onclick="hideTourInvite()" title="Hide this — you can still find the Training Quest in the toolbar"><svg viewBox="0 0 16 16" style="width:10px;height:10px;fill:currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg></button></p>
     </div>
   </div>
 </div>
@@ -2577,7 +2577,7 @@
             <li><strong>Add Agents</strong>: Drag and drop any <code>agent.py</code> file directly onto this window to instantly teach me new things.</li>
           </ul>
           <p><em>Click one of the prompts below to get started!</em></p>
-          <p><button class="starter-btn tour-invite" onclick="startTour()">New here? Take the 5-minute guided tour</button></p>
+          <p class="tour-invite-wrap"><button class="starter-btn tour-invite" onclick="startTour()">New here? Take the 5-minute guided tour</button><button class="tour-invite-hide" onclick="hideTourInvite()" title="Hide this — you can still find the Training Quest in the toolbar"><svg viewBox="0 0 16 16" style="width:10px;height:10px;fill:currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg></button></p>
         </div>
       </div>
     `;
@@ -2666,7 +2666,12 @@
     const MEMORY_FILES = ['context_memory_agent.py', 'manage_memory_agent.py', 'basic_agent.py'];
 
     document.head.insertAdjacentHTML('beforeend', `<style id="tour-css">
-      .tour-invite { display: block; margin: 12px auto 2px auto; }
+      .tour-invite-wrap { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px 0 2px 0; }
+      .tour-invite { display: block; }
+      .tour-invite-hide { background: none; border: none; color: #8b949e; cursor: pointer; padding: 4px;
+        border-radius: 6px; opacity: 0; transition: opacity .2s; line-height: 0; }
+      .tour-invite-wrap:hover .tour-invite-hide { opacity: .8; }
+      .tour-invite-hide:hover { color: #e6edf3; }
       #tour-hole { position: fixed; z-index: 9990; pointer-events: none;
         box-shadow: 0 0 0 100vmax rgba(1, 4, 9, .6); transition: all .2s ease; }
       #tour-ring { position: fixed; z-index: 9991; pointer-events: none; border: 1px solid #58a6ff;
@@ -2996,9 +3001,24 @@
     const _clearChat = window.clearChat;
     window.clearChat = function () {
       const r = _clearChat();
-      try { if (idx >= 0 && steps[idx]?.wait === 'clear') advance(); } catch (e) { console.error('[tour]', e); }
+      try {
+        if (idx >= 0 && steps[idx]?.wait === 'clear') advance();
+        applyInviteVisibility();
+      } catch (e) { console.error('[tour]', e); }
       return r;
     };
+
+    // The invite is dismissible and stays dismissed (cached locally).
+    function applyInviteVisibility() {
+      if (localStorage.getItem('rapp_tour_invite_hidden')) {
+        document.querySelectorAll('.tour-invite-wrap').forEach(el => el.style.display = 'none');
+      }
+    }
+    window.hideTourInvite = function () {
+      localStorage.setItem('rapp_tour_invite_hidden', '1');
+      applyInviteVisibility();
+    };
+    applyInviteVisibility();
 
     function onMsg(role, text, logs, wrapEl) {
       if (idx < 0) return;
