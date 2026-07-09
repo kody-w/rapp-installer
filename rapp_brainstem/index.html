@@ -953,7 +953,7 @@
       <ul>
         <li><strong>Chat</strong>: Just ask me questions below to start building and researching!</li>
         <li><strong>Agents Panel</strong>: Click the <svg class="iconify" style="vertical-align: middle; width: 1.25em; height: 1.25em;" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v4h4v2h-4v4h-2v-4H7v-2h4z"/></svg> icon (top right) to view or remove installed tools.</li>
-        <li><strong>Add Agents</strong>: Drag and drop any <code>.py</code> agent file directly onto this window to instantly teach me new things.</li>
+        <li><strong>Add Agents</strong>: Drag and drop any <code>agent.py</code> file directly onto this window to instantly teach me new things.</li>
       </ul>
       <p><em>Click one of the prompts below to get started!</em></p>
       <p><button class="starter-btn tour-invite" onclick="startTour()">New here? Take the 5-minute guided tour</button></p>
@@ -2572,7 +2572,7 @@
           <ul>
             <li><strong>Chat</strong>: Just ask me questions below to start building and researching!</li>
             <li><strong>Agents Panel</strong>: Click the <svg class="iconify" style="vertical-align: middle; width: 1.25em; height: 1.25em;" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v4h4v2h-4v4h-2v-4H7v-2h4z"/></svg> icon (top right) to view or remove installed tools.</li>
-            <li><strong>Add Agents</strong>: Drag and drop any <code>.py</code> agent file directly onto this window to instantly teach me new things.</li>
+            <li><strong>Add Agents</strong>: Drag and drop any <code>agent.py</code> file directly onto this window to instantly teach me new things.</li>
           </ul>
           <p><em>Click one of the prompts below to get started!</em></p>
           <p><button class="starter-btn tour-invite" onclick="startTour()">New here? Take the 5-minute guided tour</button></p>
@@ -2841,7 +2841,7 @@
       render();
     }
     const lastBubble = () => document.querySelector('#chat .msg.assistant:last-of-type .bubble');
-    const lastThought = () => document.querySelector('#chat .msg.assistant:last-of-type .logs-label') || lastBubble();
+    const lastThought = () => document.querySelector('#chat .msg.assistant:last-of-type .agent-logs-wrapper') || lastBubble();
     // Tour-only: bring the newest reply into view before talking about it.
     function showLatest() {
       const c = document.getElementById('chat');
@@ -2877,7 +2877,7 @@
           html: `<h3>Introduce yourself.</h3>
             <p>Like meeting a new coworker — your name, one detail about you. Spelling doesn't matter; it reads between the lines.</p>`,
           hint: `Type <em>"Remember, my name is … and I …"</em> and press <strong>Enter</strong>.`,
-          target: () => $('#input'), wait: 'assistant',
+          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant',
           reactMemory: true
         },
         {
@@ -2928,14 +2928,14 @@
           html: `<h3>See for yourself.</h3>
             <p>Ask it to use the agent you just removed.</p>`,
           hint: `Type <em>"get my latest hacker news"</em> and press <strong>Enter</strong>.`,
-          target: () => $('#input'), wait: 'assistant',
+          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant',
           reactHtml: `<h3>It told you the truth.</h3>
             <p>No bluffing, no made-up news. It can't do what isn't in its head — <strong>and it says so.</strong> That honesty is what makes it safe to trust.</p>`
         },
         {
           html: `<h3>Now put it back.</h3>
             <p>That exported file isn't a backup — it's <strong>how agents travel</strong>. It's in your Downloads.</p>`,
-          hint: `Drag the <strong>.py</strong> file from Downloads and drop it <strong>anywhere on this window</strong>.`,
+          hint: `Drag the <strong>agent.py</strong> file you exported from Downloads and drop it <strong>anywhere on this window</strong>.`,
           target: () => $('#chat'), wait: 'dropped',
           reactHtml: `<h3>Hot-loaded. Instantly.</h3>
             <p>One file = one agent, live the moment it lands. Teammates can send you these — drop one in, and <strong>their workflow becomes your workflow.</strong></p>`
@@ -2944,7 +2944,7 @@
           html: `<h3>Trust — then verify.</h3>
             <p>You know the loop by now.</p>`,
           hint: `Ask for the news again.`,
-          target: () => $('#input'), wait: 'assistant',
+          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant',
           reactHtml: `<h3>Full circle.</h3>
             <p>You removed a live agent, watched it tell the truth, and restored it with one drag — and it never went down.</p>`
         },
