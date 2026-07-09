@@ -2994,7 +2994,7 @@
         },
         {
           html: ``, hint: ``,
-          target: () => $('#agent-list-ul'), panel: true, wait: 'export',
+          target: () => $('#agent-list-ul'), panel: true, wait: 'export', skippable: true, skipTo: 'registry',
           onEnter: function () {
             openPanel();
             this.html = `<h3>Back up an agent.</h3>
@@ -3004,7 +3004,7 @@
         },
         {
           html: ``, hint: ``,
-          target: () => $('#agent-list-ul'), panel: true, wait: 'deleted',
+          target: () => $('#agent-list-ul'), panel: true, wait: 'deleted', skippable: true, skipTo: 'registry',
           onEnter: function () {
             openPanel();
             this.html = `<h3>Now remove it.</h3>
@@ -3018,7 +3018,7 @@
           html: `<h3>See for yourself.</h3>
             <p>Ask it to use the agent you just removed.</p>`,
           hint: `Type <em>"get my latest hacker news"</em> and press <strong>Enter</strong>.`,
-          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant',
+          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant', skippable: true,
           reactHtml: `<h3>It told you the truth.</h3>
             <p>No bluffing, no made-up news. It can't do what isn't in its head — <strong>and it says so.</strong> That honesty is what makes it safe to trust.</p>`
         },
@@ -3035,7 +3035,7 @@
           html: `<h3>Trust — then verify.</h3>
             <p>You know the loop by now.</p>`,
           hint: `Ask for the news again.`,
-          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant',
+          target: () => document.querySelector('.input-row') || $('#input'), wait: 'assistant', skippable: true,
           reactHtml: `<h3>Full circle.</h3>
             <p>You removed a live agent, watched it tell the truth, and restored it with one drag — and it never went down.</p>`
         },
