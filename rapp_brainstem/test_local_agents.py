@@ -740,5 +740,80 @@ class NoParamsAgent(BasicAgent):
         self.assertEqual(self.brainstem._quarantine_snapshot(), [])
 
 
+class TestCopilotTimeout(unittest.TestCase):
+    """call_copilot retries once on a read timeout, then surfaces a clean, human message.
+
+    Guards the enterprise-endpoint report where a raw urllib3
+    'HTTPSConnectionPool(host=...): Read timed out. (read timeout=60)' string
+    leaked straight into the chat UI.
+    """
+
+    def setUp(self):
+        import brainstem
+        self.brainstem = brainstem
+        self._orig_model = brainstem.MODEL
+        # Pin a plain model; with tools=None the tool_choice path is untouched.
+        brainstem.MODEL = "gpt-4o"
+
+    def tearDown(self):
+        self.brainstem.MODEL = self._orig_model
+
+    def _ok_response(self):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]
+        }
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    def test_retry_succeeds_after_one_timeout(self):
+        import requests
+        from unittest.mock import patch
+        brainstem = self.brainstem
+        ok = self._ok_response()
+        with patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://api.example")), \
+             patch.object(brainstem, "_tlog") as mock_tlog, \
+             patch("requests.post", side_effect=[requests.exceptions.ReadTimeout("boom"), ok]) as mock_post:
+            result, model = brainstem.call_copilot([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+        self.assertEqual(mock_post.call_count, 2)  # first timed out, second answered
+        events = [c.args[0] for c in mock_tlog.call_args_list]
+        self.assertIn("api.timeout_retry", events)
+
+    def test_double_timeout_raises_clean_message(self):
+        import requests
+        from unittest.mock import patch
+        brainstem = self.brainstem
+        raw = ("HTTPSConnectionPool(host='api.enterprise.githubcopilot.com', port=443): "
+               "Read timed out. (read timeout=60)")
+        with patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://api.example")), \
+             patch.object(brainstem, "_tlog") as mock_tlog, \
+             patch("requests.post", side_effect=requests.exceptions.ReadTimeout(raw)) as mock_post:
+            with self.assertRaises(RuntimeError) as ctx:
+                brainstem.call_copilot([{"role": "user", "content": "hi"}])
+
+        msg = str(ctx.exception)
+        self.assertIn("took too long", msg)
+        self.assertNotIn("HTTPSConnectionPool", msg)  # raw text must never surface
+        self.assertEqual(mock_post.call_count, 2)  # tried twice, then gave up
+        events = [c.args[0] for c in mock_tlog.call_args_list]
+        self.assertIn("api.timeout_retry", events)
+        self.assertIn("api.timeout", events)
+
+    def test_non_timeout_exception_not_retried(self):
+        import requests
+        from unittest.mock import patch
+        brainstem = self.brainstem
+        with patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://api.example")), \
+             patch("requests.post", side_effect=requests.exceptions.ConnectionError("down")) as mock_post:
+            with self.assertRaises(requests.exceptions.ConnectionError):
+                brainstem.call_copilot([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(mock_post.call_count, 1)  # non-timeout errors propagate unchanged, no retry
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
