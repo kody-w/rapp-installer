@@ -116,6 +116,14 @@ class TestDeltaAccumulation(unittest.TestCase):
         self.assertEqual(deltas, ["ok"])
         self.assertEqual(final["message"]["content"], "ok")
 
+    def test_unmarked_eof_after_partial_content_is_incomplete(self):
+        lines = [
+            'data: {"choices":[{"delta":{"content":"partial"}}]}',
+        ]
+
+        with self.assertRaises(brainstem.requests.exceptions.ConnectionError):
+            _drive_accum(brainstem._accumulate_stream(FakeStreamResp(lines)))
+
 
 class TestToolCallMerging(unittest.TestCase):
     def test_tool_call_fragments_merge_into_one_call(self):
@@ -282,6 +290,27 @@ class TestChatStreamEndpoint(unittest.TestCase):
         self.assertEqual(done["response"], "hi there")
         self.assertFalse(done["streamed"])  # ...and marked as a fallback
 
+    def test_non_streaming_fallback_transport_error_is_clean(self):
+        with mock.patch.object(brainstem, "load_soul", return_value="SOUL"), \
+             mock.patch.object(brainstem, "load_agents", return_value={}), \
+             mock.patch.object(
+                 brainstem, "call_copilot_stream",
+                 side_effect=brainstem.StreamingUnsupported(400, "no", "o1"),
+             ), \
+             mock.patch.object(
+                 brainstem, "call_copilot",
+                 side_effect=brainstem.requests.exceptions.ConnectionError(
+                     "raw connection detail"
+                 ),
+             ):
+            response = self.client.post("/chat/stream", json={"user_input": "hello"})
+            events = _parse_sse(response.get_data(as_text=True))
+
+        errors = [event for event in events if event["type"] == "error"]
+        self.assertEqual(errors[-1]["error"], brainstem._STREAM_INTERRUPTED_USER_MSG)
+        self.assertNotIn("raw connection detail", errors[-1]["error"])
+        self.assertFalse(any(event["type"] == "done" for event in events))
+
     def test_tool_round_emits_agent_event(self):
         class FakeAgent:
             name = "HackerNews"
@@ -321,6 +350,80 @@ class TestChatStreamEndpoint(unittest.TestCase):
         self.assertIn("HackerNews", agent_evt["logs"])
         done = [e for e in events if e["type"] == "done"][0]
         self.assertIn("top story", done["response"].lower())
+
+    def test_tool_budget_finalizes_interim_text_with_tools_disabled(self):
+        class LookupAgent:
+            name = "Lookup"
+
+            def to_tool(self):
+                return {"type": "function", "function": {
+                    "name": self.name,
+                    "parameters": {"type": "object", "properties": {}},
+                }}
+
+            def system_context(self):
+                return ""
+
+            def perform(self, **kwargs):
+                return "the final fact"
+
+        calls = []
+
+        def fake_stream(messages, tools=None, model=None):
+            calls.append(tools)
+            if len(calls) <= 3:
+                yield ("delta", "Let me check.")
+                yield ("done", {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Let me check.",
+                        "tool_calls": [{
+                            "id": f"call-{len(calls)}",
+                            "type": "function",
+                            "function": {"name": "Lookup", "arguments": "{}"},
+                        }],
+                    },
+                    "model": "gpt-4o",
+                    "finish_reason": "tool_calls",
+                })
+            else:
+                yield ("delta", "The answer uses the final fact.")
+                yield ("done", {
+                    "message": {
+                        "role": "assistant",
+                        "content": "The answer uses the final fact.",
+                    },
+                    "model": "gpt-4o",
+                    "finish_reason": "stop",
+                })
+
+        with mock.patch.object(brainstem, "load_soul", return_value="SOUL"), \
+             mock.patch.object(brainstem, "load_agents", return_value={"Lookup": LookupAgent()}), \
+             mock.patch.object(brainstem, "call_copilot_stream", side_effect=fake_stream):
+            response = self.client.post("/chat/stream", json={"user_input": "look it up"})
+            events = _parse_sse(response.get_data(as_text=True))
+
+        done = [event for event in events if event["type"] == "done"][0]
+        self.assertEqual(done["response"], "The answer uses the final fact.")
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(tools for tools in calls[:3]))
+        self.assertIsNone(calls[3])
+
+    def test_chunked_stream_interruption_emits_clean_error_without_done(self):
+        def interrupted_stream(messages, tools=None, model=None):
+            yield ("delta", "partial")
+            raise brainstem.requests.exceptions.ChunkedEncodingError("raw transport detail")
+
+        with mock.patch.object(brainstem, "load_soul", return_value="SOUL"), \
+             mock.patch.object(brainstem, "load_agents", return_value={}), \
+             mock.patch.object(brainstem, "call_copilot_stream", side_effect=interrupted_stream):
+            response = self.client.post("/chat/stream", json={"user_input": "hi"})
+            events = _parse_sse(response.get_data(as_text=True))
+
+        errors = [event for event in events if event["type"] == "error"]
+        self.assertEqual(errors[-1]["error"], brainstem._STREAM_INTERRUPTED_USER_MSG)
+        self.assertNotIn("raw transport detail", errors[-1]["error"])
+        self.assertFalse(any(event["type"] == "done" for event in events))
 
     def test_missing_user_input_is_400(self):
         resp = self.client.post("/chat/stream", json={"user_input": "   "})

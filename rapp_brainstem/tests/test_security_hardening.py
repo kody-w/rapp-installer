@@ -52,7 +52,7 @@ class _FakeExchangeResp:
 def test_debug_auth_never_returns_token_body(client, monkeypatch):
     monkeypatch.setattr(bs, "get_github_token", lambda: "ghu_faketoken1234567890")
     monkeypatch.setattr(bs, "_read_token_file", lambda: {"access_token": "ghu_x", "refresh_token": "r"})
-    monkeypatch.setattr(bs, "_load_copilot_cache", lambda: None)
+    monkeypatch.setattr(bs, "_load_copilot_cache", lambda github_token=None: None)
     monkeypatch.setattr(bs, "_exchange_github_for_copilot", lambda t: _FakeExchangeResp(200))
 
     r = client.get("/debug/auth")  # test_client default remote_addr is 127.0.0.1 (loopback)
@@ -98,6 +98,146 @@ def test_scrub_secrets_redacts_json_token_and_bearer():
     raw = "Authorization: Bearer abc.def.ghijklmnop trailing"
     out2 = bs._scrub_secrets(raw)
     assert "abc.def.ghijklmnop" not in out2 and "REDACTED" in out2
+
+    quoted = 'Authorization: "Bearer QUOTED_AUTH_SECRET"'
+    out3 = bs._scrub_secrets(quoted)
+    assert "QUOTED_AUTH_SECRET" not in out3 and "REDACTED" in out3
+
+
+def test_diagnostics_report_scrubs_all_published_content(client, monkeypatch):
+    monkeypatch.setattr(bs, "_tlog_save", lambda: None)
+    monkeypatch.setattr(bs, "load_agents", lambda: {})
+    monkeypatch.setattr(
+        bs.requests, "post",
+        lambda *args, **kwargs: pytest.fail("Get Help must not create an issue"),
+    )
+    monkeypatch.setattr(bs, "_flight_log", [{
+        "ts": "2026-07-09T00:00:00+00:00",
+        "type": "api.error",
+        "level": "error",
+        "data": {
+            "detail": {"authorization": "SERVER_AUTH_SECRET"},
+            "response_body": (
+                '{"token":"ENCODED_BODY_SECRET",'
+                '"device_code":"ENCODED_DEVICE_SECRET"}'
+            ),
+            "api_key": "SERVER_API_SECRET",
+            "email": "person@example.com",
+            "remote": "192.168.1.20",
+            "path": str(bs._BASE_DIR),
+        },
+    }])
+
+    response = client.post("/diagnostics/report", json={
+        "description": (
+            "Failure with Bearer DESCRIPTION_SECRET "
+            "password=DESCRIPTION_PASSWORD_SECRET"
+        ),
+        "client_events": [{
+            "type": "client.error",
+            "data": {"nested": {"password": "CLIENT_PASSWORD_SECRET"}},
+            "session_id": "CLIENT_SESSION_SECRET",
+        }],
+    })
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "draft"
+    assert data["issue_url"].startswith(
+        "https://github.com/kody-w/rapp-support/issues/new?"
+    )
+    from urllib.parse import parse_qs, urlsplit
+    draft = parse_qs(urlsplit(data["issue_url"]).query)
+    issue_body = draft["body"][0]
+    assert len(draft["title"]) == 1
+    assert draft["title"][0].endswith(f" - v{bs.VERSION}")
+    assert draft["title"][0].removesuffix(f" - v{bs.VERSION}").strip()
+    for secret in (
+        "SERVER_AUTH_SECRET",
+        "SERVER_API_SECRET",
+        "ENCODED_BODY_SECRET",
+        "ENCODED_DEVICE_SECRET",
+        "DESCRIPTION_SECRET",
+        "DESCRIPTION_PASSWORD_SECRET",
+        "CLIENT_PASSWORD_SECRET",
+        "CLIENT_SESSION_SECRET",
+    ):
+        assert secret not in issue_body
+    assert "REDACTED" in issue_body
+    assert "github_token" not in issue_body
+    assert "person@example.com" not in issue_body
+    assert "192.168.1.20" not in issue_body
+    assert str(bs._BASE_DIR) not in issue_body
+    assert "<BRAINSTEM_DIR>" in issue_body
+
+    form_response = client.post(
+        "/diagnostics/report",
+        data={"client_events": json.dumps([{"type": "client.click"}])},
+        follow_redirects=False,
+    )
+    assert form_response.status_code == 303
+    assert form_response.headers["Location"].startswith(
+        "https://github.com/kody-w/rapp-support/issues/new?"
+    )
+
+
+def test_support_report_synthesis_uses_scrubbed_transcript_without_tools(monkeypatch):
+    captured = {}
+
+    def fake_call(messages, tools=None):
+        captured["messages"] = messages
+        captured["tools"] = tools
+        return ({
+            "choices": [{"message": {"content": json.dumps({
+                "title": "Chat reports connected with expired credentials",
+                "report": (
+                    "## Summary\n\nConnected state is misleading.\n\n"
+                    "## What Happened\n\nThe UI showed connected after auth failed.\n\n"
+                    "## Expected Behavior\n\nShow sign in.\n\n"
+                    "## Actual Behavior\n\nShowed connected.\n\n"
+                    "## Reproduction Steps\n\n1. Start with an expired credential.\n\n"
+                    "## Relevant Context\n\nObserved during startup."
+                ),
+            })}}]}, bs.MODEL)
+
+    monkeypatch.setattr(bs, "call_copilot", fake_call)
+    transcript, error = bs._normalize_support_transcript([
+        {
+            "role": "user",
+            "content": (
+                "My email person@example.com failed at "
+                "C:\\Users\\Example\\secret.txt?token=RAW_SECRET"
+            ),
+        },
+        {"role": "assistant", "content": "Connected despite 192.168.1.20 failure."},
+    ])
+    assert error is None
+
+    title, report = bs._synthesize_support_report(transcript, "_No warnings_")
+
+    assert captured["tools"] is None
+    evidence = json.dumps(captured["messages"])
+    for private in (
+        "person@example.com", "C:\\Users\\Example", "RAW_SECRET", "192.168.1.20",
+    ):
+        assert private not in evidence
+    assert title == "Chat reports connected with expired credentials"
+    assert "## Reproduction Steps" in report
+
+
+def test_support_report_synthesis_falls_back_on_invalid_model_output(monkeypatch):
+    monkeypatch.setattr(bs, "call_copilot", lambda messages, tools=None: (
+        {"choices": [{"message": {"content": "not json"}}]}, bs.MODEL
+    ))
+
+    title, report = bs._synthesize_support_report(
+        [{"role": "user", "content": "The send button stayed red."}],
+        "_No warnings_",
+    )
+
+    assert title == "Brainstem help request"
+    assert "## Reproduction Steps" in report
+    assert "The send button stayed red." in report
 
 
 def test_exchange_2xx_logs_status_only(monkeypatch, capsys):
@@ -376,9 +516,20 @@ def test_models_set_malformed_json_is_json_400(client):
     assert r.status_code == 400 and r.is_json and "error" in r.get_json()
 
 
+def test_models_set_non_string_model_is_json_400(client):
+    r = client.post("/models/set", json={"model": 7})
+    assert r.status_code == 400 and r.get_json()["error"] == "model must be a string"
+
+
 def test_voice_config_save_non_object_json_is_json_400(client):
     r = client.post("/voice/config", json=[1, 2, 3])
     assert r.status_code == 400 and r.is_json and "error" in r.get_json()
+
+
+@pytest.mark.parametrize("path", ["/voice/config", "/voice/export"])
+def test_voice_export_password_must_be_a_string(client, path):
+    r = client.post(path, json={"_password": 123})
+    assert r.status_code == 400 and r.is_json and "Password required" in r.get_json()["error"]
 
 
 def test_voice_toggle_empty_body_toggles_not_error(client):
@@ -389,3 +540,107 @@ def test_voice_toggle_empty_body_toggles_not_error(client):
         assert r.get_json()["voice_mode"] == (not before)
     finally:
         bs.VOICE_MODE = before
+
+
+def test_voice_toggle_rejects_string_boolean_without_changing_state(client):
+    before = bs.VOICE_MODE
+    r = client.post("/voice/toggle", json={"enabled": "false"})
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "enabled must be a boolean"
+    assert bs.VOICE_MODE is before
+
+
+def test_voice_import_rejects_oversized_uncompressed_config(client, monkeypatch):
+    from io import BytesIO
+    import pyzipper
+
+    archive = BytesIO()
+    with pyzipper.AESZipFile(
+            archive, "w", compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES) as zf:
+        zf.setpassword(b"pw")
+        zf.writestr("voice.json", json.dumps({"padding": "x" * 1024}))
+    archive.seek(0)
+    monkeypatch.setattr(bs, "_MAX_VOICE_CONFIG_BYTES", 64)
+
+    voice_zip = os.path.join(bs._BASE_DIR, "voice.zip")
+    assert not os.path.exists(voice_zip), "test would clobber a real voice.zip"
+    response = client.post(
+        "/voice/import",
+        data={"password": "pw", "file": (archive, "voice.zip")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 413
+    assert "too large" in response.get_json()["error"]
+    assert not os.path.exists(voice_zip)
+
+
+@pytest.mark.parametrize("path", ["/voice/config", "/voice/export"])
+def test_voice_writers_reject_configs_the_readers_cannot_open(client, monkeypatch, path):
+    monkeypatch.setattr(bs, "_MAX_VOICE_CONFIG_BYTES", 64)
+    voice_zip = os.path.join(bs._BASE_DIR, "voice.zip")
+    assert not os.path.exists(voice_zip), "test would clobber a real voice.zip"
+
+    response = client.post(path, json={"_password": "pw", "padding": "x" * 1024})
+
+    assert response.status_code == 413
+    assert "too large" in response.get_json()["error"]
+    assert not os.path.exists(voice_zip)
+
+
+def test_agent_import_rejects_cross_file_name_collision_and_rolls_back(client, monkeypatch, tmp_path):
+    from io import BytesIO
+
+    def agent_source(class_name, result):
+        return f'''from agents.basic_agent import BasicAgent
+class {class_name}(BasicAgent):
+    def __init__(self):
+        self.name = "SharedName"
+        self.metadata = {{"name": self.name, "description": "test", "parameters": {{"type": "object", "properties": {{}}}}}}
+        super().__init__(name=self.name, metadata=self.metadata)
+    def perform(self, **kwargs):
+        return {result!r}
+'''.encode()
+
+    existing = tmp_path / "a_agent.py"
+    existing.write_bytes(agent_source("FirstAgent", "first"))
+    monkeypatch.setattr(bs, "AGENTS_PATH", str(tmp_path))
+
+    response = client.post(
+        "/agents/import",
+        data={"file": (BytesIO(agent_source("SecondAgent", "second")), "b_agent.py")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 409
+    assert "conflicts" in response.get_json()["error"]
+    assert existing.exists()
+    assert not (tmp_path / "b_agent.py").exists()
+
+
+def test_agent_import_restores_previous_file_when_replacement_cannot_load(client, monkeypatch, tmp_path):
+    from io import BytesIO
+
+    previous = b'''from agents.basic_agent import BasicAgent
+class ExistingAgent(BasicAgent):
+    def __init__(self):
+        self.name = "Existing"
+        self.metadata = {"name": self.name, "description": "test", "parameters": {"type": "object", "properties": {}}}
+        super().__init__(name=self.name, metadata=self.metadata)
+    def perform(self, **kwargs):
+        return "ok"
+'''
+    path = tmp_path / "existing_agent.py"
+    path.write_bytes(previous)
+    monkeypatch.setattr(bs, "AGENTS_PATH", str(tmp_path))
+
+    response = client.post(
+        "/agents/import",
+        data={"file": (BytesIO(b"this is not valid Python"), "existing_agent.py")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert "previous installation was preserved" in response.get_json()["error"]
+    assert path.read_bytes() == previous

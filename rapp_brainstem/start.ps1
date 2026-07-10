@@ -22,11 +22,16 @@ $env:PYTHONUTF8 = "1"
 # valid "command" but only prints "Python was not found" and opens the Store).
 $py = $null
 $managedPython = Join-Path $HOME ".brainstem\venv\Scripts\python.exe"
-foreach ($cmd in @($managedPython, "python", "python3")) {
+$launcherPython = $null
+try {
+    $launcherPython = (& py -3 -c "import sys; print(sys.executable)" 2>$null | Select-Object -First 1)
+} catch {}
+foreach ($cmd in @($managedPython, $launcherPython, "python", "python3")) {
+    if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
     if (($cmd -eq $managedPython) -and (-not (Test-Path $managedPython))) { continue }
     try {
-        $out = & $cmd --version 2>&1
-        if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.") { $py = $cmd; break }
+        & $cmd -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) { $py = $cmd; break }
     } catch {}
 }
 if (-not $py) {

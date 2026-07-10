@@ -5,14 +5,23 @@ cd "$(dirname "$0")"
 BRAINSTEM_HOME="$HOME/.brainstem"
 VENV_PYTHON="$BRAINSTEM_HOME/venv/bin/python"
 
+python_supported() {
+    "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1
+}
+
 # Use venv if available; create it if missing
 if [ ! -x "$VENV_PYTHON" ]; then
     echo "Setting up virtual environment..."
-    # `|| true` so a missing python3 doesn't silently abort under `set -e` before we
-    # can print an actionable message.
-    PYTHON_CMD=$(command -v python3.11 || command -v python3.12 || command -v python3.13 || command -v python3 || true)
+    PYTHON_CMD=""
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3 python; do
+        candidate_path=$(command -v "$candidate" 2>/dev/null || true)
+        if [ -n "$candidate_path" ] && python_supported "$candidate_path"; then
+            PYTHON_CMD="$candidate_path"
+            break
+        fi
+    done
     if [ -z "$PYTHON_CMD" ]; then
-        echo "ERROR: Python 3 not found. Install Python 3.11+ (https://python.org), or run the installer:"
+        echo "ERROR: Python 3.11+ not found. Install it from https://python.org, or run the installer:"
         echo "  curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash"
         exit 1
     fi
@@ -20,6 +29,12 @@ if [ ! -x "$VENV_PYTHON" ]; then
         echo "Failed to create venv — run the installer: curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash"
         exit 1
     }
+fi
+
+if ! python_supported "$VENV_PYTHON"; then
+    echo "ERROR: The managed environment uses Python older than 3.11."
+    echo "       Remove $BRAINSTEM_HOME/venv and rerun the launcher to rebuild it."
+    exit 1
 fi
 
 # Install deps if needed

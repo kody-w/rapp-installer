@@ -66,6 +66,42 @@ class TestLocalStorage(unittest.TestCase):
         mgr.set_memory_context("user-abc")
         self.assertEqual(mgr.read_json(), {"user": True})
 
+    def test_user_context_rejects_path_aliases(self):
+        from local_storage import AzureFileStorageManager
+
+        manager = AzureFileStorageManager()
+        manager.set_memory_context("b")
+        manager.write_json({"owner": "b"})
+
+        with self.assertRaisesRegex(ValueError, "single path component"):
+            manager.set_memory_context("a/../b")
+
+        manager.set_memory_context("b")
+        self.assertEqual(manager.read_json(), {"owner": "b"})
+
+    def test_user_context_rejects_non_string_identifiers(self):
+        from local_storage import AzureFileStorageManager
+
+        manager = AzureFileStorageManager()
+        manager.write_json({"shared": True})
+
+        for user_guid in (0, 123, False):
+            with self.subTest(user_guid=user_guid):
+                with self.assertRaisesRegex(ValueError, "must be a string"):
+                    manager.set_memory_context(user_guid)
+
+        manager.set_memory_context(None)
+        self.assertEqual(manager.read_json(), {"shared": True})
+
+    def test_user_context_rejects_windows_path_aliases(self):
+        from local_storage import AzureFileStorageManager
+
+        manager = AzureFileStorageManager()
+        for user_guid in ("user.", "user ", "CON", "con.txt", "COM1", "name:stream"):
+            with self.subTest(user_guid=user_guid):
+                with self.assertRaisesRegex(ValueError, "single path component"):
+                    manager.set_memory_context(user_guid)
+
     def test_named_shares_are_isolated(self):
         from local_storage import AzureFileStorageManager
 
@@ -490,6 +526,36 @@ class TestLoginStateCleanup(unittest.TestCase):
         self.assertEqual(self.brainstem._login_result, {})
         self.assertIsNone(self.brainstem._copilot_token_cache["token"])
 
+    def test_completed_device_login_invalidates_old_account_session(self):
+        import time
+        from unittest.mock import MagicMock, patch
+
+        self.brainstem._pending_login = {
+            "device_code": "device-code",
+            "expires_at": time.time() + 60,
+        }
+        self.brainstem._copilot_token_cache = {
+            "token": "old-account-session",
+            "endpoint": "https://old.example",
+            "expires_at": time.time() + 1800,
+        }
+        self.brainstem._save_copilot_cache(
+            "old-account-session", "https://old.example",
+            time.time() + 1800, "ghu_old_account",
+        )
+        response = MagicMock()
+        response.json.return_value = {
+            "access_token": "ghu_new_account",
+            "refresh_token": "refresh-new",
+        }
+
+        with patch.object(self.brainstem.requests, "post", return_value=response):
+            token = self.brainstem.poll_device_code()
+
+        self.assertEqual(token, "ghu_new_account")
+        self.assertIsNone(self.brainstem._copilot_token_cache["token"])
+        self.assertFalse(os.path.exists(self.brainstem._copilot_cache_file))
+
     def test_reuse_existing_code_preserves_login_result(self):
         """When reusing a non-expired code, _login_result should NOT be cleared."""
         import time
@@ -572,6 +638,42 @@ class TestMemoryAgentIntegration(unittest.TestCase):
         self.assertIn("memory-9", result)
         self.assertNotIn("memory-0", result)
 
+    def test_keyword_miss_does_not_return_unrelated_memories(self):
+        import brainstem
+
+        agents_dir = os.path.join(os.path.dirname(os.path.abspath(brainstem.__file__)), "agents")
+        context = brainstem._load_agent_from_file(
+            os.path.join(agents_dir, "context_memory_agent.py"))["ContextMemory"]
+        context.storage_manager.write_json({
+            "private": {
+                "message": "unrelated private memory",
+                "theme": "account",
+            }
+        })
+
+        result = context.perform(keywords=["vacation"])
+
+        self.assertEqual(result, "No matching memories found.")
+        self.assertNotIn("private memory", result)
+
+    def test_manage_memory_persists_declared_importance_and_tags(self):
+        import brainstem
+
+        agents_dir = os.path.join(os.path.dirname(os.path.abspath(brainstem.__file__)), "agents")
+        manager = brainstem._load_agent_from_file(
+            os.path.join(agents_dir, "manage_memory_agent.py"))["ManageMemory"]
+
+        manager.perform(
+            memory_type="preference",
+            content="prefers concise answers",
+            importance=5,
+            tags=["communication", "style", 7],
+        )
+
+        stored = next(iter(manager.storage_manager.read_json().values()))
+        self.assertEqual(stored["importance"], 5)
+        self.assertEqual(stored["tags"], ["communication", "style"])
+
     def test_concurrent_manage_memory_saves_are_not_lost(self):
         import brainstem
         import local_storage
@@ -605,6 +707,67 @@ class TestMemoryAgentIntegration(unittest.TestCase):
             {entry["message"] for entry in stored.values()},
             {"concurrent memory 0", "concurrent memory 1"},
         )
+
+
+class TestHackerNewsAgent(unittest.TestCase):
+
+    def _load(self):
+        import brainstem
+
+        agents_dir = os.path.join(os.path.dirname(os.path.abspath(brainstem.__file__)), "agents")
+        return brainstem._load_agent_from_file(
+            os.path.join(agents_dir, "hacker_news_agent.py"))["HackerNews"]
+
+    def test_malformed_count_returns_structured_error_without_fetching(self):
+        from unittest.mock import MagicMock, patch
+
+        agent = self._load()
+        fetch = MagicMock()
+        with patch.dict(agent.perform.__func__.__globals__, {"_fetch_json": fetch}):
+            result = json.loads(agent.perform(count="many"))
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("count must be an integer", result["message"])
+        fetch.assert_not_called()
+
+    def test_non_list_top_stories_payload_returns_structured_error(self):
+        from unittest.mock import patch
+
+        agent = self._load()
+        fetch = lambda url: {"unexpected": True}
+        with patch.dict(agent.perform.__func__.__globals__, {"_fetch_json": fetch}):
+            result = json.loads(agent.perform(count=5))
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("not a list", result["message"])
+
+
+class TestExperimentalResearchAgent(unittest.TestCase):
+
+    def test_nonzero_cli_exit_never_returns_partial_stdout_as_success(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import brainstem
+
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(brainstem.__file__)),
+            "agents", "experimental", "copilot_research_agent.py",
+        )
+        agent = brainstem._load_agent_from_file(path)["CopilotResearch"]
+        globals_dict = agent.perform.__func__.__globals__
+        result = SimpleNamespace(
+            returncode=1,
+            stdout="partial answer that must not be trusted",
+            stderr="command failed",
+        )
+
+        with patch.dict(globals_dict, {"_COPILOT_BIN": "copilot"}), \
+             patch.object(globals_dict["subprocess"], "run", return_value=result):
+            output = agent.perform(query="current topic")
+
+        self.assertIn("Copilot CLI error (exit 1)", output)
+        self.assertIn("command failed", output)
+        self.assertNotEqual(output, result.stdout)
 
 
 class TestFetchCopilotModels(unittest.TestCase):
@@ -862,6 +1025,119 @@ class BadMetaAgent(BasicAgent):
         self.assertNotIn("BadMeta", agents)
         self.assertIn(bad, self.brainstem._quarantined_agents)
         self.assertIn("metadata is not a dict", self.brainstem._quarantined_agents[bad]["reason"])
+
+    def test_provider_invalid_parameter_schema_is_quarantined(self):
+        for filename, parameters, reason in (
+            (
+                "bad_required_agent.py",
+                '{"type": "object", "properties": {}, "required": "query"}',
+                "required must be an array of strings",
+            ),
+            (
+                "bad_property_agent.py",
+                '{"type": "object", "properties": {"query": "string"}}',
+                "properties must map string names to schema objects",
+            ),
+        ):
+            with self.subTest(filename=filename):
+                code = f'''
+from agents.basic_agent import BasicAgent
+
+class InvalidSchemaAgent(BasicAgent):
+    def __init__(self):
+        self.name = "InvalidSchema"
+        self.metadata = {{
+            "name": self.name,
+            "description": "invalid schema",
+            "parameters": {parameters},
+        }}
+        super().__init__(name=self.name, metadata=self.metadata)
+
+    def perform(self, **kwargs):
+        return "unexpected"
+'''
+                path = self._write(filename, code)
+
+                agents = self.brainstem.load_agents()
+
+                self.assertNotIn("InvalidSchema", agents)
+                self.assertIn(reason, self.brainstem._quarantined_agents[path]["reason"])
+                os.remove(path)
+
+    def test_explicit_null_tool_schema_fields_are_invalid(self):
+        from types import SimpleNamespace
+
+        cases = (
+            ({"description": None}, "description"),
+            ({"description": "x", "parameters": None}, "parameters"),
+            ({"description": "x", "parameters": {
+                "type": "object", "properties": None,
+            }}, "properties"),
+            ({"description": "x", "parameters": {
+                "type": "object", "properties": {}, "required": None,
+            }}, "required"),
+        )
+        for metadata, reason in cases:
+            with self.subTest(reason=reason):
+                instance = SimpleNamespace(name="NullSchema", metadata=metadata)
+                self.assertIn(
+                    reason,
+                    self.brainstem._validate_agent_instance(instance),
+                )
+
+        nested = SimpleNamespace(name="NestedNull", metadata={
+            "description": "nested schema",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filter": {"type": "object", "properties": None},
+                },
+            },
+        })
+        self.assertIn(
+            "properties",
+            self.brainstem._validate_agent_instance(nested),
+        )
+
+    def test_duplicate_names_within_one_file_are_entirely_quarantined(self):
+        code = '''
+from agents.basic_agent import BasicAgent
+
+class FirstAgent(BasicAgent):
+    def __init__(self):
+        self.name = "Duplicate"
+        self.metadata = {"name": self.name, "description": "first", "parameters": {"type": "object", "properties": {}}}
+        super().__init__(name=self.name, metadata=self.metadata)
+    def perform(self, **kwargs):
+        return "first"
+
+class SecondAgent(FirstAgent):
+    def perform(self, **kwargs):
+        return "second"
+
+class ThirdAgent(FirstAgent):
+    def perform(self, **kwargs):
+        return "third"
+'''
+        path = self._write("duplicates_agent.py", code)
+
+        agents = self.brainstem.load_agents()
+
+        self.assertNotIn("Duplicate", agents)
+        self.assertIn(path, self.brainstem._quarantined_agents)
+        self.assertIn("within one file", self.brainstem._quarantined_agents[path]["reason"])
+
+    def test_duplicate_agent_name_keeps_first_sorted_file(self):
+        first = self.GOOD_AGENT.replace('return "ok"', 'return "first"')
+        second = self.GOOD_AGENT.replace('return "ok"', 'return "second"')
+        self._write("a_reviewer_agent.py", first)
+        duplicate = self._write("z_reviewer_agent.py", second)
+
+        agents = self.brainstem.load_agents()
+
+        self.assertEqual(agents["GoodReviewer"].perform(), "first")
+        self.assertIn(duplicate, self.brainstem._quarantined_agents)
+        self.assertIn("duplicate agent name", self.brainstem._quarantined_agents[duplicate]["reason"])
 
     def test_missing_parameters_is_lenient(self):
         """Missing 'parameters' is fine — BasicAgent defaults it; the agent loads clean."""

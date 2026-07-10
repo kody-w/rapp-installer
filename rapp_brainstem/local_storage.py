@@ -15,6 +15,11 @@ import hashlib
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brainstem_data")
 _path_locks = {}
 _path_locks_guard = threading.Lock()
+_WINDOWS_RESERVED_STEMS = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 def _safe_join(*parts):
@@ -69,6 +74,21 @@ def _lock_for(path):
     key = os.path.normcase(os.path.abspath(path))
     with _path_locks_guard:
         return _path_locks.setdefault(key, threading.RLock())
+
+
+def _memory_context_component(user_guid):
+    """Return a user identifier only when it is one literal path component."""
+    if not isinstance(user_guid, str):
+        raise ValueError("user_guid must be a string")
+    component = user_guid
+    if (
+        component in {"", ".", ".."}
+        or component.endswith((".", " "))
+        or any(char in '<>:"/\\|?*' or ord(char) < 32 for char in component)
+        or component.split(".", 1)[0].upper() in _WINDOWS_RESERVED_STEMS
+    ):
+        raise ValueError("user_guid must be a single path component")
+    return component
 
 
 def _atomic_write(path, write_fn):
@@ -130,10 +150,12 @@ class AzureFileStorageManager:
 
     def set_memory_context(self, user_guid=None):
         """Set the memory context — matches CommunityRAPP's set_memory_context."""
-        if not user_guid or user_guid == self.DEFAULT_MARKER_GUID:
+        if user_guid is None or user_guid == "" or user_guid == self.DEFAULT_MARKER_GUID:
             self.current_guid = None
             self.current_memory_path = self.shared_memory_path
             return True
+
+        _memory_context_component(user_guid)
 
         # Valid GUID — set up user-specific path (memory/{guid})
         self.current_guid = user_guid
@@ -149,7 +171,8 @@ class AzureFileStorageManager:
         A malicious user_guid (e.g. '../../') is contained by _safe_join.
         """
         if self.current_guid:
-            rel = os.path.join(self.current_memory_path, "user_memory.json")
+            context = _memory_context_component(self.current_guid)
+            rel = os.path.join(self.storage_root, "memory", context, "user_memory.json")
         else:
             rel = os.path.join(self.shared_memory_path, self.default_file_name)
         path = _safe_join(rel)

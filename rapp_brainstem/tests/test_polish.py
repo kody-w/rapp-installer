@@ -6,6 +6,7 @@ can't silently regress. Hermetic: no network, no real token or state files touch
 """
 import json
 import os
+import re
 import pytest
 
 import brainstem as bs
@@ -72,18 +73,102 @@ def test_stream_fallback_stops_after_response_is_accepted():
     assert "err.streamAccepted = true" in stream
 
 
-def test_client_request_lifecycle_supports_stop_and_stale_response_ownership():
+def test_client_request_lifecycle_supports_concurrent_owned_replies():
     index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
     send = index[index.index("function handleSendButton"):index.index("// ── Voice")]
     actions = index[index.index("function clearChat"):index.index("// ══")]
+    assert "const activeRequests = new Map()" in index
     assert "new AbortController()" in send
     assert "signal: requestState.controller.signal" in send
     assert "requestState.epoch !== conversationEpoch" in send
-    assert "controller.abort()" in send
+    assert "requestState.responseSlot" in send
+    assert "userWrap.after(requestState.responseSlot)" in send
+    assert "requestState.responseSlot.className = 'response-slot'" in send
+    assert "requestState.responseSlot.appendChild(wrap)" in index
+    assert "const inFlightTurns = new Set()" in send
+    assert "cappedHistory(inFlightTurns)" in send
+    assert ".filter(message => !excludedTurns?.has(message))" in index
+    assert "appendTyping(requestState)" in send
+    assert "insertReplyAfter(history, requestState.historyTurn" in index
+    assert "fullTranscript, requestState.transcriptTurn, requestState.transcriptReply" in index.replace("\n", " ")
+    assert "activeRequests.delete(requestState.id)" in send
+    assert "activeRequest" not in index.replace("activeRequests", "")
     assert "requestState.controller.signal.aborted" in send
-    assert "addEventListener('abort', finishDrain" in send
     assert "conversationEpoch += 1" in actions
-    assert "cancelActiveRequest(true)" in actions
+    assert "cancelActiveRequests(true)" in actions
+
+
+def test_send_stays_available_and_streamed_reply_fades_in_subtly():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    styles = index[index.index("#send {"):index.index(".toolbar-row {")]
+    fade_styles = index[index.index(".msg.assistant.stream-arriving"):index.index(".typing {")]
+    send = index[index.index("function handleSendButton"):index.index("function cancelActiveRequests")]
+    stream = index[index.index("async function sendViaStream"):index.index("// ── Voice")]
+
+    assert "min-width: 68px" in styles
+    assert "#send.stop" not in styles
+    assert "sendMessage();" in send
+    assert "controller.abort()" not in send
+    assert "stream-arriving" in fade_styles
+    assert "bubble.stream-mask" in fade_styles
+    assert "stream-message-coalesce 560ms" in fade_styles
+    assert "--stream-reveal-y" in fade_styles
+    assert "mask-image: linear-gradient" in fade_styles
+    assert "assistant-arrive 360ms" in fade_styles
+    assert "translateY(8px)" in fade_styles
+    assert "prefers-reduced-motion: reduce" in fade_styles
+    assert "animation: none; transform: none" in fade_styles
+    assert "setTimeout(() =>" in stream and "}, 80)" in stream
+    assert "buildStreamTree(assembled)" in stream
+    assert "hasUnresolvedMarkdown(nextTree)" in stream
+    assert "morphStreamChildren(bubbleEl, nextTree)" in stream
+    assert "bubbleEl.classList.add('stream-mask')" in stream
+    assert "lastRevealStartedAt = performance.now()" in stream
+    assert "560 - (performance.now() - lastRevealStartedAt)" in stream
+    assert "streaming-plain" not in index
+    assert "stream-fade-tail" not in index
+    assert "requestState.controller.signal.aborted" in stream
+    assert "requestState.epoch !== conversationEpoch) return true" in stream
+    assert "stream-caret" not in index
+    assert "ac-pop" not in index
+    assert "typeTick" not in stream
+
+
+def test_version_disclaimer_combines_experimental_warning_and_accessible_mission():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    markup = index[index.index('<h1>RAPP Brainstem'):index.index('<div class="controls">')]
+    styles = index[index.index(".version-disclaimer-wrap"):index.index(".toolbar-row {")]
+
+    assert 'tabindex="0" aria-describedby="version-disclaimer"' in markup
+    assert 'role="tooltip"' in markup
+    assert "Experimental by design." in markup
+    assert "AI can be incomplete or wrong" in markup
+    assert "accessible to everyone, on a device they control" in markup
+    assert ".version-disclaimer-wrap:hover .version-disclaimer" in styles
+    assert ".version-disclaimer-wrap:focus-within .version-disclaimer" in styles
+    assert "width: min(420px, calc(100vw - 28px))" in styles
+
+
+def test_get_help_opens_privacy_scrubbed_public_draft_without_prompt_or_submission():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    helper = index[index.index("async function shareWithAdmin"):index.index("// ── Health / Auth")]
+
+    assert "form.target = '_blank'" in helper
+    assert "form.action = `${API}/diagnostics/report`" in helper
+    assert "form.submit()" in helper
+    assert "fullTranscript.slice(-16)" in helper
+    assert "content: String(turn.content || '').slice(0, 2000)" in helper
+    assert "prompt(" not in helper
+    assert "GitHub issue draft opened with privacy-scrubbed diagnostics" in helper
+
+
+def test_unauthenticated_health_clears_stale_connected_hint():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    health = index[index.index("async function checkHealth"):index.index("// Bias to connected")]
+    unauthenticated = health[health.index("} else {"):]
+
+    assert "statusText.textContent = 'sign in'" in unauthenticated
+    assert "safeRemove('brainstem_auth')" in unauthenticated
 
 
 def test_stream_entitlement_error_uses_structured_banner_path():
@@ -91,13 +176,27 @@ def test_stream_entitlement_error_uses_structured_banner_path():
     send = index[index.index("async function sendMessage"):index.index("// ── Voice")]
     assert "evt.no_copilot_access" in send
     assert "err.noCopilotAccess" in send
-    assert "appendNoCopilotMessage(err.copilotUsername)" in send
+    assert "appendNoCopilotMessage(err.copilotUsername, requestState.responseSlot)" in send
 
 
 def test_mobile_long_responses_use_full_chat_width():
     index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
     assert "calc(100vw - 180px)" not in index
     assert ".msg.wide { width: 100%; max-width: 100%; }" in index
+
+
+def test_chat_uses_normal_near_bottom_scrolling_without_first_exchange_repositioning():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    append = index[index.index("function appendMsg"):index.index("function appendTyping")]
+    stream = index[index.index("async function sendViaStream"):index.index("// ── Voice")]
+
+    assert "first-exchange-spacer" not in index
+    assert "firstExchangeFocused" not in index
+    assert "focusFirstExchange" not in index
+    assert "conversationScrollGoal" not in index
+    assert "chat.scrollHeight - chat.scrollTop - chat.clientHeight" in append
+    assert "chat.scrollTop = chat.scrollHeight" in append
+    assert "const goal = chat.scrollHeight - chat.clientHeight" in stream
 
 
 def test_core_chat_controls_have_accessible_semantics():
@@ -111,6 +210,95 @@ def test_core_chat_controls_have_accessible_semantics():
     assert "aria-expanded" in logs
 
 
+def test_azure_speech_regions_are_validated_before_credentialed_requests():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    voice = index[index.index("// ── Voice (Azure Speech"):index.index("// ── Actions ──")]
+
+    region_pattern = re.compile(r"^[a-z0-9]{2,32}$")
+    assert region_pattern.fullmatch("uksouth")
+    assert not region_pattern.fullmatch("attacker.example/path")
+    assert "typeof value === 'string' && /^[a-z0-9]{2,32}$/.test(value)" in voice
+    assert "function ensureAzureSpeechRegionOption(value)" in voice
+    assert "isAzureSpeechRegion(cfg.azure_speech_region)" in voice
+    assert voice.count("if (!isAzureSpeechRegion(") >= 2
+    assert voice.index("if (!isAzureSpeechRegion(region))") < voice.index(
+        "https://${region}.tts.speech.microsoft.com")
+    assert voice.index("if (!isAzureSpeechRegion(azSpeechRegion))") < voice.index(
+        "https://${azSpeechRegion}.tts.speech.microsoft.com")
+
+
+def test_markdown_images_render_as_click_only_links():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    renderer = index[index.index("function inline(text)"):index.index("function parseList")]
+    sanitizer = index[index.index("const _ALLOWED_TAGS"):index.index("function appendMsg")]
+
+    assert "<img" not in renderer.lower()
+    assert "'IMG'" not in sanitizer
+    assert "return '<a href=\"' + url" in renderer
+    assert "&quot;([\\s\\S]*?)&quot;" in renderer
+    assert "(?:[^()\\s]|\\([^()\\s]*\\))+" in renderer
+
+
+def test_voice_api_keys_are_never_persisted_to_local_storage():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    voice = index[index.index("// ── Voice (Azure Speech"):index.index("// ── Actions ──")]
+
+    assert "safeSet('az_speech_key'" not in voice
+    assert "safeSet('el_api_key'" not in voice
+    assert voice.count("safeRemove('az_speech_key')") >= 2
+    assert voice.count("safeRemove('el_api_key')") >= 2
+
+
+def test_encrypted_voice_config_can_be_unlocked_after_refresh_without_persisting_password():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    voice = index[index.index("async function loadStoredVoiceConfig"):index.index(
+        "document.getElementById('az-speech-key').addEventListener")]
+
+    assert "response.status === 403" in voice
+    assert "Enter the voice.zip password" in voice
+    assert "'X-Voice-Password': password" in voice
+    assert "voiceZipPassword ? { 'X-Voice-Password': voiceZipPassword }" in voice
+    assert "safeSet('voiceZipPassword'" not in voice
+    assert "safeSet('az_speech_key'" not in voice
+    assert "safeSet('el_api_key'" not in voice
+
+
+def test_registry_fetch_is_user_initiated_and_dropped_code_requires_confirmation():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    startup = index[index.index("checkHealth();"):index.index("// ── Drag & Drop Agents")]
+    drop = index[index.index("window.addEventListener('drop'"):index.index("// ── Theme Toggle")]
+    registry = index[index.index("function toggleRegistryPanel"):index.index("let rarRegistry")]
+
+    assert "loadFeatured" not in startup
+    assert "loadRarRegistry()" in registry
+    assert "This executes Python code on your machine" in drop
+    assert drop.index("confirm(") < drop.index("fetch(`${API}/agents/import`")
+
+
+def test_transcript_import_validates_before_mutating_live_chat():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    helper = index[index.index("function normalizeImportedChat"):index.index("function importChat")]
+    importer = index[index.index("function importChat"):index.index("// ══")]
+
+    assert "Array.isArray(data.turns)" in helper
+    assert "Turn ${index + 1} must be an object" in helper
+    assert "Turn ${index + 1} role is required" in helper
+    assert "Turn ${index + 1} content is required" in helper
+    assert "content must be a string" in helper
+    assert "agent_logs must be a string" in helper
+    assert importer.index("file.size > 16 * 1024 * 1024") < importer.index("reader.readAsText(file)")
+    assert importer.index("normalizeImportedChat(") < importer.index("conversationEpoch += 1")
+    assert importer.index("normalizeImportedChat(") < importer.index("cancelActiveRequests(true)")
+
+
+def test_tour_registry_path_renders_featured_content_after_lazy_load():
+    index = open(os.path.join(bs._BASE_DIR, "index.html"), encoding="utf-8").read()
+    tour = index[index.index("const openPanel ="):index.index("async function agentFiles")]
+
+    assert "const openRegistry" in tour
+    assert "loadFeatured()" in tour
+
+
 def test_launchers_probe_all_runtime_dependencies_and_use_python_m_pip():
     root = bs._BASE_DIR
     powershell = open(os.path.join(root, "start.ps1"), encoding="utf-8").read()
@@ -118,9 +306,32 @@ def test_launchers_probe_all_runtime_dependencies_and_use_python_m_pip():
     for launcher in (powershell, shell):
         assert "pyzipper" in launcher
         assert "-m pip" in launcher
+        assert "sys.version_info >= (3, 11)" in launcher
     assert "$managedPython" in powershell
+    assert "py -3 -c" in powershell
+    assert '@($managedPython, $launcherPython, "python", "python3")' in powershell
     assert "@($env:Path, $machinePath, $userPath)" in powershell
+    assert "python3.14" in shell
+    assert "for candidate in" in shell
+    assert 'python_supported "$candidate_path"' in shell
     assert "chmod 600 .env" in shell
+
+
+def test_docs_describe_optional_voice_credentials_and_hot_agent_discovery():
+    root = bs._BASE_DIR
+    readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+    constitution = open(os.path.join(root, "CONSTITUTION.md"), encoding="utf-8").read()
+    env_example = open(os.path.join(root, ".env.example"), encoding="utf-8").read()
+    manifest = open(
+        os.path.join(root, "tests", "soul_defaults.sha256"), encoding="utf-8"
+    ).read()
+
+    assert "optional Azure Speech and ElevenLabs" in readme
+    assert "`VOICE_ZIP_PASSWORD`" in readme
+    assert "Auto-discovered on every request" in constitution
+    assert "Optional\nintegrations may use credentials" in constitution
+    assert "Azure Speech or ElevenLabs config" in env_example
+    assert "rapp_brainstem/tests/soul_hash.py" in manifest
 
 
 # ── /chat input validation always returns JSON (never an HTML 400/500) ─────────
@@ -152,6 +363,136 @@ def test_stream_rejects_malformed_history_as_json():
     r = bs.app.test_client().post(
         "/chat/stream", json={"user_input": "hi", "conversation_history": [None]})
     assert r.status_code == 400 and r.is_json
+
+
+@pytest.mark.parametrize("arguments", ["{not json", "[]"])
+def test_invalid_tool_arguments_do_not_invoke_agent(arguments):
+    class CountingAgent:
+        calls = 0
+
+        def perform(self, **kwargs):
+            self.calls += 1
+            return "unexpected"
+
+    agent = CountingAgent()
+    results, logs = bs.run_tool_calls(
+        [{"id": "call-1", "function": {"name": "Writer", "arguments": arguments}}],
+        {"Writer": agent},
+    )
+
+    assert agent.calls == 0
+    assert results == [{
+        "tool_call_id": "call-1",
+        "role": "tool",
+        "name": "Writer",
+        "content": "Error: Tool arguments must be a valid JSON object.",
+    }]
+    assert logs == ["[Writer] Error: Tool arguments must be a valid JSON object."]
+
+
+def test_chat_finalizes_tool_calls_even_when_last_round_has_interim_text(monkeypatch):
+    class LookupAgent:
+        name = "Lookup"
+
+        def to_tool(self):
+            return {
+                "type": "function",
+                "function": {
+                    "name": self.name,
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+
+        def system_context(self):
+            return ""
+
+        def perform(self, **kwargs):
+            return "the final fact"
+
+    calls = []
+
+    def fake_copilot(messages, tools=None, model=None):
+        calls.append(tools)
+        if len(calls) <= 3:
+            return ({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "Let me check.",
+                        "tool_calls": [{
+                            "id": f"call-{len(calls)}",
+                            "type": "function",
+                            "function": {"name": "Lookup", "arguments": "{}"},
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+            }, "gpt-4o")
+        return ({
+            "choices": [{
+                "message": {"role": "assistant", "content": "The answer uses the final fact."},
+                "finish_reason": "stop",
+            }],
+        }, "gpt-4o")
+
+    monkeypatch.setattr(bs, "load_soul", lambda: "SOUL")
+    monkeypatch.setattr(bs, "load_agents", lambda: {"Lookup": LookupAgent()})
+    monkeypatch.setattr(bs, "call_copilot", fake_copilot)
+
+    response = bs.app.test_client().post("/chat", json={"user_input": "look it up"})
+
+    assert response.status_code == 200
+    assert response.get_json()["response"] == "The answer uses the final fact."
+    assert len(calls) == 4
+    assert all(tools for tools in calls[:3])
+    assert calls[3] is None
+
+
+def test_chat_does_not_return_interim_text_when_finalization_fails(monkeypatch):
+    class LookupAgent:
+        name = "Lookup"
+
+        def to_tool(self):
+            return {"type": "function", "function": {
+                "name": self.name,
+                "parameters": {"type": "object", "properties": {}},
+            }}
+
+        def system_context(self):
+            return ""
+
+        def perform(self, **kwargs):
+            return "tool result"
+
+    calls = 0
+
+    def fake_copilot(messages, tools=None, model=None):
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            raise RuntimeError("finalization failed")
+        return ({"choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "Let me check.",
+                "tool_calls": [{
+                    "id": f"call-{calls}",
+                    "type": "function",
+                    "function": {"name": "Lookup", "arguments": "{}"},
+                }],
+            },
+            "finish_reason": "tool_calls",
+        }]}, "gpt-4o")
+
+    monkeypatch.setattr(bs, "load_soul", lambda: "SOUL")
+    monkeypatch.setattr(bs, "load_agents", lambda: {"Lookup": LookupAgent()})
+    monkeypatch.setattr(bs, "call_copilot", fake_copilot)
+
+    response = bs.app.test_client().post("/chat", json={"user_input": "look it up"})
+
+    assert response.status_code == 200
+    assert response.get_json()["response"].startswith("I couldn't finish")
+    assert response.get_json()["response"] != "Let me check."
 
 
 # ── DELETE cannot remove the shared base class ─────────────────────────────────
@@ -254,9 +595,8 @@ def test_storage_blocks_traversal(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         local_storage._safe_join("../../etc/passwd")
     m = local_storage.AzureFileStorageManager()
-    m.set_memory_context("../../escape")
     with pytest.raises(ValueError):
-        m.write_json({"x": 1})
+        m.set_memory_context("../../escape")
 
 
 def test_storage_blocks_symlink_escape(tmp_path, monkeypatch):

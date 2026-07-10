@@ -29,11 +29,11 @@
       codes.push('<code>' + c + '</code>');
       return '\u0000C' + (codes.length - 1) + '\u0000';
     });
-    text = text.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"([^"]*)")?\s*\)/g,
+    text = text.replace(/!\[([^\]]*)\]\(\s*((?:[^()\s]|\([^()\s]*\))+)(?:\s+&quot;([\s\S]*?)&quot;)?\s*\)/g,
       function (_, alt, url, title) {
-        return '<img src="' + url + '" alt="' + alt + '"' + (title ? ' title="' + title + '"' : '') + '>';
+        return '<a href="' + url + '"' + (title ? ' title="' + title + '"' : '') + '>' + (alt || url) + '</a>';
       });
-    text = text.replace(/\[([^\]]+)\]\(\s*([^)\s]+)(?:\s+"([^"]*)")?\s*\)/g,
+    text = text.replace(/\[([^\]]+)\]\(\s*((?:[^()\s]|\([^()\s]*\))+)(?:\s+&quot;([\s\S]*?)&quot;)?\s*\)/g,
       function (_, t, url, title) {
         return '<a href="' + url + '"' + (title ? ' title="' + title + '"' : '') + '>' + t + '</a>';
       });
@@ -309,6 +309,7 @@
   #chat-watermark svg { width: 20px; height: 20px; fill: #30363d; }
   /* Hide the empty-state hint once a real conversation begins */
   #chat.has-messages #chat-watermark { display: none; }
+  .response-slot { display: contents; }
 
   /* Model-switch notice (slim centered pill, not a chat bubble) */
   .model-notice {
@@ -433,13 +434,58 @@
     overflow-y: auto; border-top: 1px solid #21262d;
   }
   .agent-logs.collapsed { display: none; }
-  .ac-pop { display: inline-block; animation: ac-pop .16s cubic-bezier(.34, 1.56, .64, 1); }
-  @keyframes ac-pop { from { transform: scale(.4) translateY(3px); opacity: .2; }
-    to { transform: scale(1) translateY(0); opacity: 1; } }
-  .stream-caret { display: inline-block; width: 3px; height: 1em; margin-left: 2px;
-    background: #58a6ff; vertical-align: -0.15em; border-radius: 1px;
-    animation: caret-blink 1.1s ease-in-out infinite; }
-  @keyframes caret-blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: .15; } }
+  .msg.assistant.stream-arriving {
+    animation: assistant-arrive 360ms cubic-bezier(.22, .61, .36, 1) both;
+  }
+  @property --stream-reveal-y {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+  }
+  .msg.assistant .bubble.stream-mask {
+    --stream-reveal-y: 0px;
+    --stream-reveal-from: 0px;
+    --stream-reveal-to: 0px;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      #000 0,
+      #000 max(0px, calc(var(--stream-reveal-y) - 24px)),
+      rgba(0,0,0,.72) max(0px, calc(var(--stream-reveal-y) - 14px)),
+      rgba(0,0,0,.2) max(0px, calc(var(--stream-reveal-y) - 4px)),
+      transparent var(--stream-reveal-y),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      #000 0,
+      #000 max(0px, calc(var(--stream-reveal-y) - 24px)),
+      rgba(0,0,0,.72) max(0px, calc(var(--stream-reveal-y) - 14px)),
+      rgba(0,0,0,.2) max(0px, calc(var(--stream-reveal-y) - 4px)),
+      transparent var(--stream-reveal-y),
+      transparent 100%
+    );
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+  .msg.assistant .bubble.stream-revealing {
+    animation: stream-message-coalesce 560ms cubic-bezier(.22, .61, .36, 1) both;
+  }
+  @keyframes assistant-arrive {
+    from { opacity: 0.12; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes stream-message-coalesce {
+    from { --stream-reveal-y: var(--stream-reveal-from); }
+    to { --stream-reveal-y: var(--stream-reveal-to); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .msg.assistant.stream-arriving,
+    .msg.assistant .bubble.stream-revealing { animation: none; transform: none; }
+    .msg.assistant .bubble.stream-mask {
+      -webkit-mask-image: none;
+      mask-image: none;
+    }
+  }
 
   .typing { display: flex; gap: 4px; align-items: center; padding: 4px 0; }
   .typing span {
@@ -476,12 +522,38 @@
   #send {
     background: #1f6feb; color: #fff; border: none; border-radius: 8px;
     padding: 10px 18px; font-size: 14px; font-weight: 600;
+    min-width: 68px;
     cursor: pointer; transition: background 0.15s, opacity 0.15s;
   }
   #send:hover { background: #388bfd; }
   #send:disabled { opacity: 0.4; cursor: default; }
-  #send.stop { background: #da3633; }
-  #send.stop:hover { background: #f85149; }
+
+  .version-disclaimer-wrap { display: inline-block; }
+  #version-tag {
+    display: inline-block; padding: 2px 4px; border-radius: 4px;
+    color: #8b949e; font-size: 11px; font-weight: 400; vertical-align: middle;
+    cursor: help; outline: none; transition: color 0.15s, background 0.15s;
+  }
+  #version-tag:hover, #version-tag:focus-visible {
+    color: #f2cc60; background: rgba(210, 153, 34, 0.12);
+  }
+  .version-disclaimer {
+    position: absolute; z-index: 300; top: calc(100% + 8px); left: 50%;
+    width: min(420px, calc(100vw - 28px)); padding: 12px 14px;
+    border: 1px solid #3d3522; border-top-color: #d29922; border-radius: 6px;
+    background: #161b22; color: #b1bac4; box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+    font-size: 13px; font-weight: 400; line-height: 1.5; text-align: left;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transform: translate(-50%, -4px);
+    transition: opacity 0.15s, visibility 0.15s, transform 0.15s;
+  }
+  .version-disclaimer strong {
+    display: block; margin-bottom: 3px; color: #f2cc60; font-size: 12px;
+  }
+  .version-disclaimer-wrap:hover .version-disclaimer,
+  .version-disclaimer-wrap:focus-within .version-disclaimer {
+    opacity: 1; visibility: visible; transform: translate(-50%, 0);
+  }
 
   .toolbar-row {
     display: flex; justify-content: space-between; align-items: center;
@@ -882,13 +954,22 @@
     color: #24292e;
     border-color: #57606a;
   }
+  body.light-mode #version-tag:hover,
+  body.light-mode #version-tag:focus-visible {
+    color: #9a6700; background: rgba(154,103,0,0.08);
+  }
+  body.light-mode .version-disclaimer {
+    background: #ffffff; color: #57606a; border-color: #d0d7de;
+    border-top-color: #bf8700; box-shadow: 0 10px 28px rgba(31,35,40,0.16);
+  }
+  body.light-mode .version-disclaimer strong { color: #9a6700; }
 
   /* ── Pearl polish ─────────────────────────────────────────────────────────
      Additive refinements only — no new elements, no changed interactions. */
 
   /* 1. Header survives narrow viewports: let the control cluster wrap onto a
         second line instead of pushing the model picker and buttons off-screen. */
-  header { flex-wrap: wrap; row-gap: 8px; }
+  header { position: relative; flex-wrap: wrap; row-gap: 8px; }
   header .controls { flex-wrap: wrap; justify-content: flex-end; }
   @media (max-width: 600px) {
     header { padding: 10px 14px; }
@@ -990,7 +1071,15 @@
   <div class="logo">
     <span class="icon"><svg viewBox="0 0 512 512" fill="#fff"><path d="M184 0c-30.9 0-56.5 22.7-61.1 52.3C54.5 67 0 130 0 206.8c0 41.6 17.4 79.2 45.3 105.9-2 9.2-3.3 18.8-3.3 28.7 0 55.3 35.8 102.2 85.5 119C142.2 493 172.6 512 208 512h16c35.3 0 64-28.7 64-64V86c0-8.8-7.2-16-16-16h-16c-8.8 0-16 7.2-16 16v16c0 8.8-7.2 16-16 16s-16-7.2-16-16V64c0-35.3-28.7-64-64-64h40zm144 0c30.9 0 56.5 22.7 61.1 52.3C457.5 67 512 130 512 206.8c0 41.6-17.4 79.2-45.3 105.9 2 9.2 3.3 18.8 3.3 28.7 0 55.3-35.8 102.2-85.5 119C369.8 493 339.4 512 304 512h-16c-35.3 0-64-28.7-64-64V86c0-8.8 7.2-16 16-16h16c8.8 0 16 7.2 16 16v16c0 8.8 7.2 16 16 16s16-7.2 16-16V64c0-35.3 28.7-64 64-64h-40z"/></svg></span>
   </div>
-  <h1>RAPP Brainstem <span id="version-tag" style="font-size:11px;font-weight:400;color:#8b949e;vertical-align:middle"></span></h1>
+  <h1>RAPP Brainstem
+    <span class="version-disclaimer-wrap">
+      <span id="version-tag" tabindex="0" aria-describedby="version-disclaimer"></span>
+      <span id="version-disclaimer" class="version-disclaimer" role="tooltip">
+        <strong>Experimental by design.</strong>
+        RAPP Brainstem is a local-first space for exploring the AI frontier. AI can be incomplete or wrong, so verify important results. Our mission is to make hands-on AI accessible to everyone, on a device they control.
+      </span>
+    </span>
+  </h1>
   <div class="controls">
     <div class="dot" id="dot"></div>
     <span id="status-text" role="status" aria-live="polite">checking...</span>
@@ -1210,8 +1299,8 @@
   }
   const strong = (t) => el('strong', { text: t });
   // Model-fallback notice, built entirely from escaped/text nodes.
-  function appendModelFallback(requested, actual) {
-    const w = appendMsg('system', '');
+  function appendModelFallback(requested, actual, beforeNode) {
+    const w = appendMsg('system', '', null, beforeNode);
     setChildren(w.querySelector('.bubble'), [
       '\u21AA ', strong(requested), ' was unavailable — answered by ', strong(actual), '.'
     ]);
@@ -1223,8 +1312,10 @@
   // bound over a long session. Cap by turns and a rough character budget.
   const MAX_HISTORY_MSGS = 40;
   const MAX_HISTORY_CHARS = 60000;
-  function cappedHistory() {
-    let msgs = history.slice(-MAX_HISTORY_MSGS);
+  function cappedHistory(excludedTurns) {
+    let msgs = history
+      .filter(message => !excludedTurns?.has(message))
+      .slice(-MAX_HISTORY_MSGS);
     let total = msgs.reduce((n, m) => n + ((m && m.content) ? m.content.length : 0), 0);
     while (msgs.length > 1 && total > MAX_HISTORY_CHARS) {
       total -= (msgs[0].content ? msgs[0].content.length : 0);
@@ -1233,13 +1324,39 @@
     return msgs;
   }
 
+  function insertReplyAfter(list, requestTurn, reply) {
+    const index = list.indexOf(requestTurn);
+    if (index >= 0) list.splice(index + 1, 0, reply);
+  }
+
+  function commitAssistantReply(requestState, content, details) {
+    details = details || {};
+    requestState.historyReply = {
+      role: 'assistant', content: content
+    };
+    insertReplyAfter(history, requestState.historyTurn, requestState.historyReply);
+    requestState.transcriptReply = {
+      role: 'assistant',
+      content: content,
+      agent_logs: details.agentLogs || null,
+      voice_response: details.voiceResponse || null,
+      model: details.model || document.getElementById('model-select')?.value || null,
+      session_id: details.sessionId || null,
+      timestamp: new Date().toISOString()
+    };
+    insertReplyAfter(
+      fullTranscript, requestState.transcriptTurn, requestState.transcriptReply
+    );
+  }
+
   // Same-origin: chat hits whichever brainstem served this page (parent on 7071,
   // booted twin on 7081+, etc). For file:// or non-brainstem origins, fall back to 7071.
   const API = (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://127.0.0.1:7071';
   let sessionId = null;
   let history = [];
   let fullTranscript = [];
-  let activeRequest = null;
+  const activeRequests = new Map();
+  let requestSequence = 0;
   let conversationEpoch = 0;
   let logDisclosureId = 0;
   let devMode = safeGet('brainstem_dev') === 'true';
@@ -1304,34 +1421,31 @@
 
   async function shareWithAdmin() {
     clog('client.share_with_admin');
-    const desc = prompt('Describe what went wrong (optional):') || '';
-    try {
-      const r = await fetch(`${API}/diagnostics/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: desc, client_events: _clientLog })
-      });
-      const d = await r.json();
-      if (d.issue_url) {
-        const wrap = appendMsg('system', '');
-        const link = el('a', { text: d.issue_url, target: '_blank', rel: 'noopener noreferrer', style: 'color:#58a6ff' });
-        if (_safeUrl(d.issue_url)) link.setAttribute('href', d.issue_url);
-        setChildren(wrap.querySelector('.bubble'), [
-          '✅ Help request submitted! Your admin can see it at:', el('br'), link
-        ]);
-      } else {
-        // API call failed — fall back to local export
-        throw new Error(d.error || 'Could not create issue');
-      }
-    } catch (e) {
-      // Fallback: download book.json + open issue URL manually
-      clog('client.share_fallback', { error: e.message });
-      try { await exportBook(); } catch {}
-      appendMsg('system',
-        '📖 Diagnostics saved as book.json. Attach it to a new issue at ' +
-        'github.com/kody-w/rapp-support/issues/new or send it to your admin.'
-      );
-    }
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `${API}/diagnostics/report`;
+    form.target = '_blank';
+    const events = document.createElement('input');
+    events.type = 'hidden';
+    events.name = 'client_events';
+    events.value = JSON.stringify(_clientLog);
+    form.appendChild(events);
+    const transcript = document.createElement('input');
+    transcript.type = 'hidden';
+    transcript.name = 'transcript';
+    transcript.value = JSON.stringify(
+      fullTranscript.slice(-16).map(turn => ({
+        role: turn.role,
+        content: String(turn.content || '').slice(0, 2000)
+      }))
+    );
+    form.appendChild(transcript);
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+    appendMsg('system',
+      'GitHub issue draft opened with privacy-scrubbed diagnostics. Review it before submitting.'
+    );
   }
 
   // ── Health / Auth ──
@@ -1433,10 +1547,10 @@
     const b = document.getElementById('copilot-banner');
     if (b) b.style.display = 'none';
   }
-  function appendNoCopilotMessage(username) {
+  function appendNoCopilotMessage(username, beforeNode) {
     username = username || 'this account';
     showCopilotBanner(username);
-    const wrap = appendMsg('system', '');
+    const wrap = appendMsg('system', '', null, beforeNode);
     setChildren(wrap.querySelector('.bubble'), [
       strong(username), ' doesn\'t have GitHub Copilot access yet. Enable Copilot on your account, then ',
       actionLink('Retry', 'color:#58a6ff', function () { retryCopilot(); }), ' — no need to sign in again.'
@@ -1555,6 +1669,7 @@
         statusText.textContent = 'sign in';
         statusText.style.cursor = 'pointer';
         statusText.onclick = showLoginOverlay;
+        safeRemove('brainstem_auth');
         hideCopilotBanner();
         clog('health.unauthenticated', { status: d.status });
         // Only auto-show overlay on first visit, never if user dismissed it
@@ -1581,12 +1696,6 @@
   }
   checkHealth();
   healthInterval = setInterval(checkHealth, 5000);
-
-  // Pull featured agents from the RAR registry on every load for discoverability.
-  // Deferred so it runs after this script fully initializes (loadRarRegistry
-  // touches `let`-scoped state declared further down — calling it inline would
-  // hit the temporal dead zone and abort the rest of the script).
-  setTimeout(loadFeatured, 0);
 
   // ── Drag & Drop Agents ──
   const dropOverlay = document.getElementById('drop-overlay');
@@ -1619,6 +1728,9 @@
     for (const file of files) {
       if (!file.name.endsWith('.py')) {
         alert('Only .py agent files are supported.');
+        continue;
+      }
+      if (!confirm(`Install ${file.name}? This executes Python code on your machine.`)) {
         continue;
       }
       const formData = new FormData();
@@ -2240,7 +2352,7 @@
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!activeRequest) sendMessage();
+      sendMessage();
     }
   });
 
@@ -2255,7 +2367,7 @@
   const _ALLOWED_TAGS = new Set([
     'P','BR','HR','PRE','CODE','KBD','BLOCKQUOTE',
     'EM','STRONG','B','I','U','S','DEL','INS','MARK','SMALL','SUB','SUP','SPAN','DIV',
-    'A','IMG','UL','OL','LI','DL','DT','DD',
+    'A','UL','OL','LI','DL','DT','DD',
     'H1','H2','H3','H4','H5','H6',
     'TABLE','THEAD','TBODY','TFOOT','TR','TH','TD','CAPTION','COLGROUP','COL'
   ]);
@@ -2269,7 +2381,6 @@
   ]);
   const _ALLOWED_ATTR = {
     'A': ['href','title'],
-    'IMG': ['src','alt','title'],
     'TD': ['align'], 'TH': ['align','scope'], 'COL': ['span'], 'COLGROUP': ['span'],
     'OL': ['start']
   };
@@ -2329,7 +2440,7 @@
     return out;
   }
 
-  function appendMsg(role, text, logs) {
+  function appendMsg(role, text, logs, responseSlot) {
     const chat = document.getElementById('chat');
     // Only auto-scroll to the newest message if the user is already near the bottom
     // (or it's their own message) — never yank the view while they read scrollback.
@@ -2415,16 +2526,19 @@
 
     wrap.appendChild(avatar);
     wrap.appendChild(right);
-    chat.appendChild(wrap);
+    if (responseSlot && responseSlot.classList?.contains('response-slot')) {
+      responseSlot.appendChild(wrap);
+    }
+    else chat.appendChild(wrap);
     if (nearBottom || role === 'user') chat.scrollTop = chat.scrollHeight;
     return wrap;
   }
 
-  function appendTyping() {
+  function appendTyping(requestState) {
     const chat = document.getElementById('chat');
     const wrap = document.createElement('div');
-    wrap.className = 'msg assistant';
-    wrap.id = 'typing-indicator';
+    wrap.className = 'msg assistant typing-indicator';
+    wrap.dataset.requestId = String(requestState.id);
     const av = document.createElement('div');
     av.className = 'avatar';
     const ic = document.createElement('span');
@@ -2435,12 +2549,15 @@
     bub.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
     wrap.appendChild(av);
     wrap.appendChild(bub);
-    chat.appendChild(wrap);
+    requestState.responseSlot.appendChild(wrap);
+    requestState.typingWrap = wrap;
     chat.scrollTop = chat.scrollHeight;
+    return wrap;
   }
 
-  function removeTyping() {
-    document.getElementById('typing-indicator')?.remove();
+  function removeTyping(requestState) {
+    requestState.typingWrap?.remove();
+    requestState.typingWrap = null;
   }
 
   // A starter pill can show one thing in the transcript (its label) while POSTing
@@ -2455,29 +2572,16 @@
   }
 
   // ── Send ──
-  function setSendActive(active) {
-    const send = document.getElementById('send');
-    send.disabled = false;
-    send.classList.toggle('stop', active);
-    send.textContent = active ? 'Stop' : 'Send';
-    send.setAttribute('aria-label', active ? 'Stop response' : 'Send message');
-  }
-
   function handleSendButton() {
-    if (activeRequest) {
-      activeRequest.controller.abort();
-      const send = document.getElementById('send');
-      send.disabled = true;
-      send.textContent = 'Stopping...';
-      return;
-    }
     sendMessage();
   }
 
-  function cancelActiveRequest(silent) {
-    if (!activeRequest) return;
-    activeRequest.silentCancel = !!silent;
-    activeRequest.controller.abort();
+  function cancelActiveRequests(silent) {
+    for (const requestState of activeRequests.values()) {
+      requestState.silentCancel = !!silent;
+      requestState.controller.abort();
+    }
+    activeRequests.clear();
   }
 
   function isAbortError(err, requestState) {
@@ -2485,17 +2589,27 @@
   }
 
   async function sendMessage() {
-    if (activeRequest) return;
     const text = input.value.trim();
     if (!text) return;
 
+    const inFlightTurns = new Set();
+    for (const pending of activeRequests.values()) {
+      if (pending.historyTurn) inFlightTurns.add(pending.historyTurn);
+      if (pending.historyReply) inFlightTurns.add(pending.historyReply);
+    }
+    const requestHistory = cappedHistory(inFlightTurns);
+
     const requestState = {
+      id: ++requestSequence,
       controller: new AbortController(),
       epoch: conversationEpoch,
       silentCancel: false,
+      responseSlot: document.createElement('div'),
+      typingWrap: null,
     };
-    activeRequest = requestState;
-    setSendActive(true);
+    requestState.responseSlot.className = 'response-slot';
+    requestState.responseSlot.dataset.requestId = String(requestState.id);
+    activeRequests.set(requestState.id, requestState);
 
     // `text` is what the user sees (bubble + transcript); `payload` is what /chat
     // receives. They differ only for starter pills; the override is consumed once.
@@ -2510,12 +2624,17 @@
     input.value = '';
     input.style.height = 'auto';
 
-    appendMsg('user', text);
-    const requestHistory = cappedHistory();
-    history.push({ role: 'user', content: text });
-    fullTranscript.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
+    const userWrap = appendMsg('user', text);
+    userWrap.after(requestState.responseSlot);
+    requestState.historyTurn = { role: 'user', content: text };
+    requestState.transcriptTurn = {
+      role: 'user', content: text, timestamp: new Date().toISOString()
+    };
+    history.push(requestState.historyTurn);
+    fullTranscript.push(requestState.transcriptTurn);
 
-    appendTyping();
+    appendTyping(requestState);
+    input.focus();
 
     try {
       // Prefer streaming for a live, token-by-token render. ANY failure on the
@@ -2528,8 +2647,8 @@
         } catch (err) {
           const errorText = (err && err.message) || String(err);
           if (err && err.noCopilotAccess) {
-            removeTyping();
-            appendNoCopilotMessage(err.copilotUsername);
+            removeTyping(requestState);
+            appendNoCopilotMessage(err.copilotUsername, requestState.responseSlot);
             streamed = true;
           } else if (isAbortError(err, requestState)) {
             throw err;
@@ -2538,11 +2657,11 @@
             // email, changed CRM state, or written a file. Replaying through /chat
             // would execute that work twice, so surface the interruption instead.
             clog('chat.stream_interrupted', { error: errorText });
-            removeTyping();
+            removeTyping(requestState);
             appendMsg('system',
               'The response stream was interrupted after processing began. ' +
               'It was not retried automatically, to avoid repeating any agent actions. ' +
-              errorText);
+              errorText, null, requestState.responseSlot);
             streamed = true;
           } else {
             clog('chat.stream_fallback', { error: errorText });
@@ -2554,22 +2673,19 @@
         await sendViaPost(text, payload, requestHistory, requestState);
       }
     } catch (err) {
-      removeTyping();
+      removeTyping(requestState);
       if (isAbortError(err, requestState)) {
         clog('chat.stopped', { silent: requestState.silentCancel });
         if (!requestState.silentCancel && requestState.epoch === conversationEpoch) {
-          appendMsg('system', 'Response stopped. Any agent action already started may still finish.');
+          appendMsg('system', 'Response stopped. Any agent action already started may still finish.', null, requestState.responseSlot);
         }
       } else {
         clog('chat.unexpected_error', { error: (err && err.message) || String(err) });
-        appendMsg('system', 'The request could not be completed. Please try again.');
+        appendMsg('system', 'The request could not be completed. Please try again.', null, requestState.responseSlot);
       }
     } finally {
-      if (activeRequest === requestState) {
-        activeRequest = null;
-        setSendActive(false);
-        input.focus();
-      }
+      activeRequests.delete(requestState.id);
+      if (!requestState.responseSlot.childElementCount) requestState.responseSlot.remove();
     }
   }
 
@@ -2590,7 +2706,7 @@
 
       const d = await r.json();
       if (requestState.epoch !== conversationEpoch) return;
-      removeTyping();
+      removeTyping(requestState);
       if (d.agent_logs) console.log('[brainstem] agent_logs:', d.agent_logs.slice(0, 200));
 
       if (d.error) {
@@ -2600,22 +2716,22 @@
           // They ARE authenticated — only Copilot entitlement is missing. Surface the
           // persistent banner (with Retry) and an inline note. Do NOT clear
           // brainstem_auth: that would bounce them to a misleading "signed out" state.
-          appendNoCopilotMessage(username);
+          appendNoCopilotMessage(username, requestState.responseSlot);
         } else if (d.error.includes('usage limit') || d.error.includes('quota')) {
-          const wrap = appendMsg('system', '');
+          const wrap = appendMsg('system', '', null, requestState.responseSlot);
           setChildren(wrap.querySelector('.bubble'), [
             d.error, el('br'),
             actionLink('🔄 Switch to a different account', 'color:#58a6ff;font-size:12px', switchAccount)
           ]);
         } else if (d.error.includes('Not authenticated') || d.error.includes('Copilot') || d.error.includes('Sign in')) {
-          const wrap = appendMsg('system', '');
+          const wrap = appendMsg('system', '', null, requestState.responseSlot);
           setChildren(wrap.querySelector('.bubble'), [
             'Not signed in. ',
             actionLink('Sign in with GitHub', 'color:#58a6ff', showLoginOverlay),
             ' to use Copilot AI.'
           ]);
         } else {
-          const wrap = appendMsg('system', '');
+          const wrap = appendMsg('system', '', null, requestState.responseSlot);
           setChildren(wrap.querySelector('.bubble'), [
             'Error: ' + d.error, el('br'),
             actionLink('🆘 Share with admin for help', 'color:#f0883e;font-size:12px', shareWithAdmin)
@@ -2626,24 +2742,18 @@
         sessionId = d.session_id;
         const sidEl = document.getElementById('session-id');
         if (sidEl) sidEl.textContent = sessionId?.slice(0, 8) + '...';
-        history.push({ role: 'assistant', content: d.response });
-        fullTranscript.push({
-          role: 'assistant',
-          content: d.response,
-          agent_logs: d.agent_logs || null,
-          voice_response: d.voice_response || null,
-          // Record the model that actually answered (d.model), falling back to
-          // the selected one for older servers that don't report it.
-          model: d.model || document.getElementById('model-select')?.value || null,
-          session_id: d.session_id,
-          timestamp: new Date().toISOString()
+        commitAssistantReply(requestState, d.response, {
+          agentLogs: d.agent_logs,
+          voiceResponse: d.voice_response,
+          model: d.model,
+          sessionId: d.session_id,
         });
         // If the server had to fall back to a different model, say so instead of
         // silently misattributing the answer to the selected model.
         if (d.model && d.requested_model && d.model !== d.requested_model) {
-          appendModelFallback(d.requested_model, d.model);
+          appendModelFallback(d.requested_model, d.model, requestState.responseSlot);
         }
-        appendMsg('assistant', d.response, d.agent_logs && d.agent_logs.trim() ? d.agent_logs : null);
+        appendMsg('assistant', d.response, d.agent_logs && d.agent_logs.trim() ? d.agent_logs : null, requestState.responseSlot);
         if (d.voice_response) {
           speakText(d.voice_response);
         } else if (voiceMode) {
@@ -2652,14 +2762,14 @@
       }
     } catch (err) {
       if (isAbortError(err, requestState) || requestState.epoch !== conversationEpoch) throw err;
-      removeTyping();
+      removeTyping(requestState);
       clog('chat.network_error', { error: err.message });
       // A completely bounced call is the ONE signal that we're not connected.
       document.getElementById('dot').className = 'dot offline';
       document.getElementById('status-text').textContent = 'not connected';
       if (healthInterval) clearInterval(healthInterval);
       healthInterval = setInterval(checkHealth, 5000);
-      const wrap = appendMsg('system', '');
+      const wrap = appendMsg('system', '', null, requestState.responseSlot);
       setChildren(wrap.querySelector('.bubble'), [
         'Could not reach brainstem: ' + err.message, el('br'),
         actionLink('🆘 Share with admin for help', 'color:#f0883e;font-size:12px', shareWithAdmin)
@@ -2692,130 +2802,151 @@
     const decoder = new TextDecoder();
     let buf = '';
     let assembled = '';
-    let bubbleWrap = null, bubbleEl = null, textNode = null, caret = null;
+    let bubbleWrap = null, bubbleEl = null;
     let agentLogs = '';
     let doneData = null;
-
-    // ── Typewriter smoother ──────────────────────────────────────────────
-    // Network chunks arrive in spastic bursts; readers deserve RPG-dialogue
-    // calm. Deltas fill `assembled`; this loop reveals it at a steady pace,
-    // accelerating smoothly only when a fast model builds up backlog.
-    let shown = 0, rafId = null, lastTs = 0, pauseUntil = 0, maxH = 0;
+    let renderedSource = '';
+    let flushTimer = null;
+    let lastRevealStartedAt = 0;
+    let revealedHeight = 0;
+    let maxH = 0;
     const normalizeMd = (t) => t.replace(/^([ \t]*)[\u2022\u2023\u25AA\u25CF]\s+/gm, '$1- ');
-    // Render the visible slice as REAL markdown every frame — formatting forms
-    // as the text pours instead of snapping in at the end. The caret rides
-    // inside the last block so it breathes where the words are appearing.
-    function renderShown(freshChars) {
-      if (typeof marked === 'undefined') { textNode.nodeValue = assembled.slice(0, shown); return; }
-      bubbleEl.replaceChildren(sanitizeMarkdownFragment(marked.parse(normalizeMd(assembled.slice(0, shown)))));
-      // The write-head bounces: wrap the freshest characters in a springy pop,
-      // Animal Crossing style — the words feel like they're arriving, not loading.
-      if (freshChars > 0) {
-        // Find the last NON-EMPTY text node (marked's HTML ends with a
-        // whitespace-only \n text node that would otherwise swallow the pop).
-        const walker = document.createTreeWalker(bubbleEl, NodeFilter.SHOW_TEXT);
-        let node = null, cur;
-        while ((cur = walker.nextNode())) { if (cur.nodeValue && cur.nodeValue.trim()) node = cur; }
-        if (node) {
-          const n = Math.min(freshChars, 3, node.nodeValue.length);
-          const tail = node.nodeValue.slice(-n);
-          node.nodeValue = node.nodeValue.slice(0, -n);
-          const popSpan = document.createElement('span');
-          popSpan.className = 'ac-pop';
-          popSpan.textContent = tail;
-          node.parentNode.appendChild(popSpan);
-        }
+
+    function wrapStreamTextNodes(root) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.nodeValue && node.nodeValue.trim()) nodes.push(node);
       }
-      (bubbleEl.lastElementChild || bubbleEl).appendChild(caret);
-      // Height ratchet: partial-markdown reflows (a line flipping between
-      // paragraph and list, an unclosed ** collapsing) make the bubble
-      // breathe up and down every few frames — jerky. Mid-stream the bubble
-      // may only ever GROW; the final render resets cleanly.
+      for (const textNode of nodes) {
+        const span = document.createElement('span');
+        span.dataset.streamText = '';
+        span.textContent = textNode.nodeValue;
+        textNode.replaceWith(span);
+      }
+    }
+
+    function buildStreamTree(text) {
+      const root = document.createElement('div');
+      if (typeof marked === 'undefined') root.textContent = text;
+      else root.appendChild(sanitizeMarkdownFragment(marked.parse(normalizeMd(text))));
+      wrapStreamTextNodes(root);
+      return root;
+    }
+
+    function hasUnresolvedMarkdown(root) {
+      const text = root.textContent || '';
+      return /(?:\*\*|__|~~|```|!\[[^\]\n]*$|\[[^\]\n]*$|\]\([^\)\n]*$|(^|\n)\s*#{1,6}\s*$|(^|[^`])`[^`\n]*$)/m.test(text);
+    }
+
+    function fadingClone(node) {
+      return node.cloneNode(true);
+    }
+
+    function syncStreamAttributes(current, next) {
+      for (const attr of [...current.attributes]) {
+        if (!next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
+      }
+      for (const attr of [...next.attributes]) {
+        current.setAttribute(attr.name, attr.value);
+      }
+    }
+
+    function morphStreamNode(current, next) {
+      if (current.nodeType !== next.nodeType
+          || (current.nodeType === Node.ELEMENT_NODE && current.tagName !== next.tagName)) {
+        current.replaceWith(fadingClone(next));
+        return;
+      }
+      if (current.nodeType === Node.TEXT_NODE) {
+        if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue;
+        return;
+      }
+      if (current.hasAttribute('data-stream-text')
+          && next.hasAttribute('data-stream-text')) {
+        const oldText = current.textContent || '';
+        const nextText = next.textContent || '';
+        if (nextText === oldText) return;
+        if (nextText.startsWith(oldText)) {
+          current.appendChild(document.createTextNode(nextText.slice(oldText.length)));
+        } else {
+          current.textContent = nextText;
+        }
+        return;
+      }
+      syncStreamAttributes(current, next);
+      morphStreamChildren(current, next);
+    }
+
+    function morphStreamChildren(current, next) {
+      for (let index = 0; index < next.childNodes.length; index++) {
+        const nextChild = next.childNodes[index];
+        const currentChild = current.childNodes[index];
+        if (!currentChild) current.appendChild(fadingClone(nextChild));
+        else morphStreamNode(currentChild, nextChild);
+      }
+      while (current.childNodes.length > next.childNodes.length) {
+        current.lastChild.remove();
+      }
+    }
+
+    function renderStreamedText(force = false) {
+      if (!bubbleEl || renderedSource === assembled) return;
+      const nextTree = buildStreamTree(assembled);
+      if (!force && hasUnresolvedMarkdown(nextTree)) return;
+      const currentReveal = parseFloat(getComputedStyle(bubbleEl)
+        .getPropertyValue('--stream-reveal-y')) || 0;
+      morphStreamChildren(bubbleEl, nextTree);
+      renderedSource = assembled;
       const h = bubbleEl.offsetHeight;
       if (h > maxH) maxH = h; else if (maxH) bubbleEl.style.minHeight = maxH + 'px';
-      // Long answers earn width once, mid-pour — not as an end-of-stream snap.
       if (assembled.length > 1200 && bubbleWrap && !bubbleWrap.classList.contains('wide')) {
         bubbleWrap.classList.add('wide');
         maxH = 0; bubbleEl.style.minHeight = '';
       }
-    }
-    function typeTick(ts) {
-      rafId = null;
-      if (!bubbleEl) return;
-      const dt = lastTs ? Math.min((ts - lastTs) / 1000, 0.1) : 0.016;
-      lastTs = ts;
-      const backlog = assembled.length - shown;
-      if (backlog > 0 && ts >= pauseUntil) {
-        // Zen pace: ~45 cps is read-along speed. Catch-up is a slow tide
-        // (+0.8 cps per backlogged char, low ceiling) so even a torrent from
-        // a fast model arrives as a calm, steady pour — never smashed out.
-        const rate = Math.min(45 + backlog * 0.8, 350);
-        const prevShown = shown;
-        shown = Math.min(assembled.length, shown + Math.max(1, Math.round(rate * dt)));
-        renderShown(shown - prevShown);
-        // Breathe at punctuation, dialogue-style — a beat after a sentence,
-        // half a beat at a clause — but never while far behind the model.
-        if (backlog < 400) {
-          const ch = assembled[shown - 1];
-          if ('.!?'.includes(ch)) pauseUntil = ts + 200;
-          else if (',;:'.includes(ch)) pauseUntil = ts + 90;
-        }
-      }
-      // Zen scroll: every frame, ease gently toward the bottom instead of
-      // snapping — a new line becomes a drift, not a jerk. Respects a reader
-      // who has scrolled up (only engages within ~240px of the bottom).
+      const nextRevealHeight = Math.max(currentReveal, bubbleEl.scrollHeight + 24);
+      const overlapReveal = revealedHeight
+        ? Math.max(0, Math.min(revealedHeight, nextRevealHeight) - 28)
+        : 0;
+      const revealFrom = Math.min(nextRevealHeight, Math.max(currentReveal, overlapReveal));
+      bubbleEl.style.setProperty('--stream-reveal-y', `${revealFrom}px`);
+      bubbleEl.style.setProperty('--stream-reveal-from', `${revealFrom}px`);
+      bubbleEl.style.setProperty('--stream-reveal-to', `${nextRevealHeight}px`);
+      bubbleEl.classList.remove('stream-revealing');
+      void bubbleEl.offsetHeight;
+      bubbleEl.classList.add('stream-revealing');
+      revealedHeight = nextRevealHeight;
+      lastRevealStartedAt = performance.now();
       const chat = document.getElementById('chat');
       const goal = chat.scrollHeight - chat.clientHeight;
       const gap = goal - chat.scrollTop;
-      // Hard velocity ceiling (~160px/s): the viewport drifts like a slow
-      // elevator no matter how the text bursts — low blood pressure by design.
-      if (gap > 0 && gap < 400) chat.scrollTop += Math.min(gap, Math.max(0.5, 160 * dt));
-      if (shown < assembled.length || !doneData) rafId = requestAnimationFrame(typeTick);
+      if (gap > 0 && gap < 400) chat.scrollTop += Math.min(gap, 28);
     }
-    function ensureTyping() { if (!rafId) { lastTs = 0; rafId = requestAnimationFrame(typeTick); } }
-    function drainRemaining() {
-      // Called at finalize: let the tail write itself out quickly but visibly.
-      return new Promise(resolve => {
-        let prev = 0;
-        let finishRafId = null;
-        const finishDrain = () => {
-          if (finishRafId) cancelAnimationFrame(finishRafId);
-          requestState.controller.signal.removeEventListener('abort', finishDrain);
-          resolve();
-        };
-        requestState.controller.signal.addEventListener('abort', finishDrain, { once: true });
-        (function finish(ts) {
-          if (requestState.controller.signal.aborted) return finishDrain();
-          if (!bubbleEl || shown >= assembled.length) return finishDrain();
-          const dt = prev ? Math.min((ts - prev) / 1000, 0.1) : 0.016;
-          prev = ts;
-          // The finale keeps the same calm ceiling — no last-second face-smash.
-          shown = Math.min(assembled.length, shown + Math.max(1, Math.round(500 * dt)));
-          renderShown();
-          const chat = document.getElementById('chat');
-          const goal = chat.scrollHeight - chat.clientHeight;
-          const gap = goal - chat.scrollTop;
-          if (gap > 0) chat.scrollTop += Math.min(gap, Math.max(0.5, 160 * dt));
-          finishRafId = requestAnimationFrame(finish);
-        })(performance.now());
-      });
+
+    function scheduleStreamRender() {
+      if (flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        renderStreamedText();
+      }, 80);
     }
 
     function ensureBubble() {
       if (!bubbleWrap) {
-        removeTyping();
-        bubbleWrap = appendMsg('assistant', '');
+        removeTyping(requestState);
+        bubbleWrap = appendMsg('assistant', '', null, requestState.responseSlot);
+        bubbleWrap.classList.add('stream-arriving');
+        requestState.bubbleWrap = bubbleWrap;
         bubbleEl = bubbleWrap.querySelector('.bubble');
-        textNode = document.createTextNode('');
-        caret = document.createElement('span');
-        caret.className = 'stream-caret';
-        bubbleEl.append(textNode, caret);
+        bubbleEl.classList.add('stream-mask');
       }
     }
     function rollback(restoreTyping = true) {
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       if (bubbleWrap) { bubbleWrap.remove(); bubbleWrap = null; }
-      if (restoreTyping && !document.getElementById('typing-indicator')) appendTyping();
+      requestState.bubbleWrap = null;
+      if (restoreTyping && !requestState.typingWrap) appendTyping(requestState);
     }
 
     try {
@@ -2835,7 +2966,7 @@
           if (evt.type === 'delta') {
             ensureBubble();
             assembled += evt.text || '';
-            ensureTyping();
+            scheduleStreamRender();
           } else if (evt.type === 'agent') {
             if (evt.logs) agentLogs = evt.logs;
           } else if (evt.type === 'done') {
@@ -2864,55 +2995,58 @@
     }
 
     if (requestState.epoch !== conversationEpoch) {
-      if (rafId) cancelAnimationFrame(rafId);
+      if (flushTimer) clearTimeout(flushTimer);
       if (bubbleWrap) bubbleWrap.remove();
-      removeTyping();
+      removeTyping(requestState);
       return true;
     }
 
-    // Finalize — let the typewriter finish gracefully, then swap in markdown.
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-    await drainRemaining();
+    // Finalize any buffered text, then swap in the stable markdown rendering.
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    renderStreamedText(true);
     if (requestState.controller.signal.aborted) {
       if (bubbleWrap) bubbleWrap.remove();
-      removeTyping();
+      removeTyping(requestState);
       throw new DOMException('Response stopped', 'AbortError');
     }
     if (requestState.epoch !== conversationEpoch) return true;
-    if (caret) caret.remove();
-    removeTyping();
+    removeTyping(requestState);
     const d = doneData;
     const finalText = (d.response != null && d.response !== '') ? d.response : assembled;
     const finalLogs = (d.agent_logs && d.agent_logs.trim()) ? d.agent_logs
                     : (agentLogs.trim() ? agentLogs : null);
+
+    if (lastRevealStartedAt && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const remainingReveal = Math.max(0, 560 - (performance.now() - lastRevealStartedAt));
+      if (remainingReveal) await new Promise(resolve => setTimeout(resolve, remainingReveal));
+    }
+    if (requestState.controller.signal.aborted
+        || requestState.epoch !== conversationEpoch) return true;
 
     clog('chat.stream_done', { response_len: finalText.length, has_agents: !!finalLogs, streamed: !!d.streamed });
     sessionId = d.session_id || sessionId;
     const sidEl = document.getElementById('session-id');
     if (sidEl) sidEl.textContent = sessionId?.slice(0, 8) + '...';
 
-    history.push({ role: 'assistant', content: finalText });
-    fullTranscript.push({
-      role: 'assistant',
-      content: finalText,
-      agent_logs: finalLogs,
-      voice_response: d.voice_response || null,
-      model: d.model || document.getElementById('model-select')?.value || null,
-      session_id: d.session_id,
-      timestamp: new Date().toISOString()
+    commitAssistantReply(requestState, finalText, {
+      agentLogs: finalLogs,
+      voiceResponse: d.voice_response,
+      model: d.model,
+      sessionId: d.session_id,
     });
 
     // If the server had to fall back to a different model, say so instead of
     // silently misattributing the answer to the selected model.
     if (d.model && d.requested_model && d.model !== d.requested_model) {
-      appendModelFallback(d.requested_model, d.model);
+      appendModelFallback(d.requested_model, d.model, requestState.responseSlot);
     }
 
     // Replace the progressive plain-text bubble with a proper markdown-rendered
     // one that also carries the agent-logs disclosure — exactly what the POST
     // path produces, so the final DOM is identical either way.
     if (bubbleWrap) bubbleWrap.remove();
-    appendMsg('assistant', finalText, finalLogs);
+    requestState.bubbleWrap = null;
+    appendMsg('assistant', finalText, finalLogs, requestState.responseSlot);
 
     if (d.voice_response) speakText(d.voice_response);
     else if (voiceMode) speakText(finalText);
@@ -2929,16 +3063,35 @@
   let voiceProvider = safeGet('voice_provider') || 'browser';
 
   // Azure Speech state
+  const isAzureSpeechRegion = value =>
+    typeof value === 'string' && /^[a-z0-9]{2,32}$/.test(value);
+  function ensureAzureSpeechRegionOption(value) {
+    if (!isAzureSpeechRegion(value)) return false;
+    const select = document.getElementById('az-speech-region');
+    if (!Array.from(select.options).some(option => option.value === value)) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    }
+    select.value = value;
+    return true;
+  }
   let azSpeechKey = safeGet('az_speech_key') || '';
-  let azSpeechRegion = safeGet('az_speech_region') || 'eastus';
+  safeRemove('az_speech_key');
+  const savedAzSpeechRegion = safeGet('az_speech_region');
+  let azSpeechRegion = isAzureSpeechRegion(savedAzSpeechRegion) ? savedAzSpeechRegion : 'eastus';
+  ensureAzureSpeechRegionOption(azSpeechRegion);
   let azVoiceName = safeGet('az_voice_name') || 'en-US-JennyNeural';
 
   // ElevenLabs state
   let elApiKey = safeGet('el_api_key') || '';
+  safeRemove('el_api_key');
   let elVoiceId = safeGet('el_voice_id') || '';
   let elModel = safeGet('el_model') || 'eleven_multilingual_v2';
 
   let currentAudio = null;
+  let voiceZipPassword = '';
 
   // Populate saved settings into panel inputs
   document.getElementById('voice-provider').value = voiceProvider;
@@ -2948,47 +3101,58 @@
   document.getElementById('el-model-select').value = elModel;
   switchVoiceProvider();   // also loads voices for the active provider only
 
-  // Auto-load config from server-side voice.zip (seeds UI if no localStorage yet)
-  fetch(`${API}/voice/config`).then(r => r.json()).then(cfg => {
-    if (cfg.error) return;
-    let changed = false;
-    if (cfg.provider && !safeGet('voice_provider')) {
-      voiceProvider = cfg.provider;
-      document.getElementById('voice-provider').value = cfg.provider;
-      safeSet('voice_provider', cfg.provider);
-      changed = true;
-    }
-    if (cfg.azure_speech_key && !azSpeechKey) {
-      azSpeechKey = cfg.azure_speech_key;
-      document.getElementById('az-speech-key').value = cfg.azure_speech_key;
-      safeSet('az_speech_key', cfg.azure_speech_key);
-      changed = true;
-    }
-    if (cfg.azure_speech_region && !safeGet('az_speech_region')) {
-      azSpeechRegion = cfg.azure_speech_region;
-      document.getElementById('az-speech-region').value = cfg.azure_speech_region;
-      safeSet('az_speech_region', cfg.azure_speech_region);
-    }
-    if (cfg.azure_voice_name && !safeGet('az_voice_name')) {
-      azVoiceName = cfg.azure_voice_name;
-      safeSet('az_voice_name', cfg.azure_voice_name);
-    }
-    if (cfg.api_key && !elApiKey) {
-      elApiKey = cfg.api_key;
-      document.getElementById('el-api-key').value = cfg.api_key;
-      safeSet('el_api_key', cfg.api_key);
-    }
-    if (cfg.voice_id && !elVoiceId) {
-      elVoiceId = cfg.voice_id;
-      safeSet('el_voice_id', cfg.voice_id);
-    }
-    if (cfg.model && cfg.model !== 'eleven_multilingual_v2') {
-      elModel = cfg.model;
-      document.getElementById('el-model-select').value = cfg.model;
-      safeSet('el_model', cfg.model);
-    }
-    switchVoiceProvider();   // loads voices for the active provider only
-  }).catch(() => {});
+  // Auto-load config from server-side voice.zip without copying keys to localStorage.
+  async function loadStoredVoiceConfig() {
+    try {
+      let response = await fetch(`${API}/voice/config`, {
+        headers: voiceZipPassword ? { 'X-Voice-Password': voiceZipPassword } : {}
+      });
+      if (response.status === 403) {
+        const password = prompt('Enter the voice.zip password to unlock saved voice settings:');
+        if (!password) return;
+        voiceZipPassword = password;
+        response = await fetch(`${API}/voice/config`, {
+          headers: { 'X-Voice-Password': password }
+        });
+      }
+      const cfg = await response.json();
+      if (!response.ok || cfg.error) return;
+      if (cfg.provider && !safeGet('voice_provider')) {
+        voiceProvider = cfg.provider;
+        document.getElementById('voice-provider').value = cfg.provider;
+        safeSet('voice_provider', cfg.provider);
+      }
+      if (cfg.azure_speech_key && !azSpeechKey) {
+        azSpeechKey = cfg.azure_speech_key;
+        document.getElementById('az-speech-key').value = cfg.azure_speech_key;
+      }
+      if (isAzureSpeechRegion(cfg.azure_speech_region) &&
+        !isAzureSpeechRegion(safeGet('az_speech_region'))) {
+        azSpeechRegion = cfg.azure_speech_region;
+        ensureAzureSpeechRegionOption(cfg.azure_speech_region);
+        safeSet('az_speech_region', cfg.azure_speech_region);
+      }
+      if (cfg.azure_voice_name && !safeGet('az_voice_name')) {
+        azVoiceName = cfg.azure_voice_name;
+        safeSet('az_voice_name', cfg.azure_voice_name);
+      }
+      if (cfg.api_key && !elApiKey) {
+        elApiKey = cfg.api_key;
+        document.getElementById('el-api-key').value = cfg.api_key;
+      }
+      if (cfg.voice_id && !elVoiceId) {
+        elVoiceId = cfg.voice_id;
+        safeSet('el_voice_id', cfg.voice_id);
+      }
+      if (cfg.model && cfg.model !== 'eleven_multilingual_v2') {
+        elModel = cfg.model;
+        document.getElementById('el-model-select').value = cfg.model;
+        safeSet('el_model', cfg.model);
+      }
+      switchVoiceProvider();
+    } catch {}
+  }
+  loadStoredVoiceConfig();
 
   document.getElementById('az-speech-key').addEventListener('change', () => {
     const key = document.getElementById('az-speech-key').value.trim();
@@ -3028,6 +3192,12 @@
     const status = document.getElementById('voice-panel-status');
     if (!key) {
       sel.innerHTML = '<option value="">Enter API key first</option>';
+      return;
+    }
+    if (!isAzureSpeechRegion(region)) {
+      sel.innerHTML = '<option value="">Invalid Azure region</option>';
+      status.textContent = 'Error: Invalid Azure Speech region';
+      status.style.color = '#f85149';
       return;
     }
     sel.innerHTML = '<option value="">Loading voices...</option>';
@@ -3082,6 +3252,9 @@
   }
 
   async function speakWithAzure(text) {
+    if (!isAzureSpeechRegion(azSpeechRegion)) {
+      throw new Error('Invalid Azure Speech region');
+    }
     const locale = azVoiceName.split('-').slice(0, 2).join('-') || 'en-US';
     const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'><voice name='${azVoiceName}'>${escapeXml(text)}</voice></speak>`;
     const r = await fetch(`https://${azSpeechRegion}.tts.speech.microsoft.com/cognitiveservices/v1`, {
@@ -3167,19 +3340,19 @@
       azSpeechKey = document.getElementById('az-speech-key').value.trim();
       azSpeechRegion = document.getElementById('az-speech-region').value;
       azVoiceName = document.getElementById('az-voice-select').value;
-      if (azSpeechKey) safeSet('az_speech_key', azSpeechKey);
+      safeRemove('az_speech_key');
       if (azSpeechRegion) safeSet('az_speech_region', azSpeechRegion);
       if (azVoiceName) safeSet('az_voice_name', azVoiceName);
       if (azSpeechKey && document.getElementById('az-voice-select').options.length <= 1) loadAzureVoices();
-      status.textContent = azSpeechKey ? 'Saved — Azure Speech active' : 'Saved — enter API key to activate';
+      status.textContent = azSpeechKey ? 'Azure Speech active for this session' : 'Enter API key to activate';
     } else if (provider === 'elevenlabs') {
       elApiKey = document.getElementById('el-api-key').value.trim();
       elVoiceId = document.getElementById('el-voice-select').value;
       elModel = document.getElementById('el-model-select').value;
-      if (elApiKey) safeSet('el_api_key', elApiKey);
+      safeRemove('el_api_key');
       if (elVoiceId) safeSet('el_voice_id', elVoiceId);
       safeSet('el_model', elModel);
-      status.textContent = elApiKey ? 'Saved — ElevenLabs active' : 'Saved — enter API key to activate';
+      status.textContent = elApiKey ? 'ElevenLabs active for this session' : 'Enter API key to activate';
     } else {
       status.textContent = 'Saved — using browser voice';
     }
@@ -3305,11 +3478,11 @@
     if (cfg.azure_speech_key) {
       azSpeechKey = cfg.azure_speech_key;
       document.getElementById('az-speech-key').value = cfg.azure_speech_key;
-      safeSet('az_speech_key', cfg.azure_speech_key);
+      safeRemove('az_speech_key');
     }
-    if (cfg.azure_speech_region) {
+    if (isAzureSpeechRegion(cfg.azure_speech_region)) {
       azSpeechRegion = cfg.azure_speech_region;
-      document.getElementById('az-speech-region').value = cfg.azure_speech_region;
+      ensureAzureSpeechRegionOption(cfg.azure_speech_region);
       safeSet('az_speech_region', cfg.azure_speech_region);
     }
     if (cfg.azure_voice_name) {
@@ -3319,7 +3492,7 @@
     if (cfg.api_key) {
       elApiKey = cfg.api_key;
       document.getElementById('el-api-key').value = cfg.api_key;
-      safeSet('el_api_key', cfg.api_key);
+      safeRemove('el_api_key');
     }
     if (cfg.voice_id) {
       elVoiceId = cfg.voice_id;
@@ -3387,6 +3560,7 @@
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      voiceZipPassword = pw;
       _applyVoiceConfig(d);
       status.textContent = 'Imported — voice config loaded';
       status.style.color = '#3fb950';
@@ -3404,7 +3578,7 @@
   // ── Actions ──
   function clearChat() {
     conversationEpoch += 1;
-    cancelActiveRequest(true);
+    cancelActiveRequests(true);
     starterPayloadOverride = null;
     history = [];
     fullTranscript = [];
@@ -3453,19 +3627,63 @@
     URL.revokeObjectURL(url);
   }
 
+  function normalizeImportedChat(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error('Transcript must be a JSON object.');
+    }
+    if (data.model != null && typeof data.model !== 'string') {
+      throw new Error('Transcript model must be a string.');
+    }
+    if (data.session_id != null && typeof data.session_id !== 'string') {
+      throw new Error('Transcript session_id must be a string.');
+    }
+    if (!Array.isArray(data.turns) || !data.turns.length) {
+      throw new Error('No turns found in file.');
+    }
+
+    const turns = data.turns.map((turn, index) => {
+      if (!turn || typeof turn !== 'object' || Array.isArray(turn)) {
+        throw new Error(`Turn ${index + 1} must be an object.`);
+      }
+      if (!Object.prototype.hasOwnProperty.call(turn, 'role')) {
+        throw new Error(`Turn ${index + 1} role is required.`);
+      }
+      if (!Object.prototype.hasOwnProperty.call(turn, 'content')) {
+        throw new Error(`Turn ${index + 1} content is required.`);
+      }
+      const role = turn.role;
+      const content = turn.content;
+      if (role !== 'user' && role !== 'assistant') {
+        throw new Error(`Turn ${index + 1} has an invalid role.`);
+      }
+      if (typeof content !== 'string') {
+        throw new Error(`Turn ${index + 1} content must be a string.`);
+      }
+      if (turn.agent_logs != null && typeof turn.agent_logs !== 'string') {
+        throw new Error(`Turn ${index + 1} agent_logs must be a string.`);
+      }
+      return { ...turn, role, content };
+    });
+
+    return { ...data, turns };
+  }
+
   function importChat(event) {
     const file = event.target.files[0];
     if (!file) return;
     event.target.value = '';
+    if (file.size > 16 * 1024 * 1024) {
+      alert('Failed to import: transcript file is too large.');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async function(e) {
       try {
-        const data = JSON.parse(e.target.result);
-        const turns = data.turns || [];
-        if (!turns.length) { alert('No turns found in file.'); return; }
+        const data = normalizeImportedChat(JSON.parse(e.target.result));
+        const turns = data.turns;
 
         conversationEpoch += 1;
-        cancelActiveRequest(true);
+        cancelActiveRequests(true);
 
         if (data.model) {
           const modelSelect = document.getElementById('model-select');
@@ -3612,9 +3830,13 @@
     const $ = (s) => document.querySelector(s);
     const pill = (n) => document.querySelectorAll('#starter-prompts .starter-btn')[n - 1] || null;
     const clearBtn = () => [...document.querySelectorAll('.toolbar-link')].find(b => b.textContent.trim() === 'Clear') || null;
+    const lastMatch = (selector) => {
+      const matches = document.querySelectorAll(selector);
+      return matches[matches.length - 1] || null;
+    };
     const showPills = () => document.getElementById('starter-prompts')?.classList.remove('hidden-prompts');
     const openPanel = () => { const p = $('#agents-panel'); if (p && !p.classList.contains('open')) { p.classList.add('open'); loadAgentsList(); } };
-    const openRegistry = () => { const p = $('#registry-panel'); if (p && !p.classList.contains('open')) { p.classList.add('open'); loadRarRegistry(); } };
+    const openRegistry = () => { const p = $('#registry-panel'); if (p && !p.classList.contains('open')) { p.classList.add('open'); loadFeatured(); } };
     const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
 
     async function agentFiles() {
@@ -3752,8 +3974,8 @@
       if (targetFn) st.target = targetFn;
       render();
     }
-    const lastBubble = () => document.querySelector('#chat .msg.assistant:last-of-type .bubble');
-    const lastThought = () => document.querySelector('#chat .msg.assistant:last-of-type .agent-logs-wrapper') || lastBubble();
+    const lastBubble = () => lastMatch('#chat .msg.assistant .bubble');
+    const lastThought = () => lastMatch('#chat .msg.assistant .agent-logs-wrapper') || lastBubble();
     // Tour-only: bring the newest reply into view before talking about it.
     function showLatest() {
       const c = document.getElementById('chat');
@@ -3956,8 +4178,8 @@
 
     // ── Observers (all pass-through; zero behavior change when tour is off) ──
     const _appendMsg = window.appendMsg;
-    window.appendMsg = function (role, text, logs) {
-      const w = _appendMsg(role, text, logs);
+    window.appendMsg = function (role, text, logs, responseSlot) {
+      const w = _appendMsg(role, text, logs, responseSlot);
       try { onMsg(role, text, logs, w); } catch (e) { console.error('[tour]', e); }
       return w;
     };
@@ -3998,9 +4220,9 @@
           // the typing indicator, then the LIVE streaming bubble as it writes
           // (streaming removes the indicator at first token), then the sent
           // message — never leave the card floating in space.
-          st.target = () => document.getElementById('typing-indicator')
-            || document.querySelector('#chat .stream-caret')?.closest('.msg')
-            || document.querySelector('#chat .msg.user:last-of-type');
+          st.target = () => document.querySelector('#chat .typing-indicator')
+            || document.querySelector('#chat .stream-arriving')
+            || lastMatch('#chat .msg.user');
           st.hint = 'Watch — the reply is arriving right here.';
           if (cursor) cursor.style.opacity = '0';
           render();
@@ -4030,7 +4252,7 @@
       showLatest();
       if (st.reactMemory) {
         // Peek at the just-rendered message for a memory-agent internal thought.
-        const lastLogs = document.querySelector('#chat .msg.assistant:last-of-type .agent-logs');
+        const lastLogs = lastMatch('#chat .msg.assistant .agent-logs');
         if (lastLogs && /manage.?memory/i.test(lastLogs.textContent)) {
           react(`<h3>It just had a thought —<br>and you can see it.</h3>
             <p>The highlighted <strong>▶ agent called ManageMemory</strong> line is an internal thought. Click it open. It chose, on its own, what about you was worth keeping.</p>

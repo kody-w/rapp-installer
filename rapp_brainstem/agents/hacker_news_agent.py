@@ -71,9 +71,19 @@ class HackerNewsAgent(BasicAgent):
         super().__init__(name=self.name, metadata=self.metadata)
 
     def perform(self, **kwargs):
-        count = max(1, min(30, int(kwargs.get("count", 10) or 10)))
         try:
-            top_ids = _fetch_json(_HN_TOP)[:count]
+            count = max(1, min(30, int(kwargs.get("count", 10) or 10)))
+        except (TypeError, ValueError):
+            return json.dumps({
+                "status": "error",
+                "message": "count must be an integer from 1 to 30",
+            })
+
+        try:
+            top_ids = _fetch_json(_HN_TOP)
+            if not isinstance(top_ids, list):
+                raise RuntimeError("top stories response was not a list")
+            top_ids = top_ids[:count]
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 

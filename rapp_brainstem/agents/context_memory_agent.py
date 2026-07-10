@@ -1,3 +1,4 @@
+import json
 import logging
 from agents.basic_agent import BasicAgent
 from utils.azure_file_storage import AzureFileStorageManager
@@ -126,10 +127,14 @@ class ContextMemoryAgent(BasicAgent):
                 theme = str(memory.get('theme', 'Unknown'))[:100]
                 date = memory.get('date', '')
                 time_str = memory.get('time', '')
+                content = json.dumps(message, ensure_ascii=False)
                 if date and time_str:
-                    memory_lines.append(f"- {message} (Theme: {theme}, Recorded: {date} {time_str})")
+                    memory_lines.append(
+                        f"- Memory content (verbatim): {content} "
+                        f"(Theme: {theme}, Recorded: {date} {time_str})")
                 else:
-                    memory_lines.append(f"- {message} (Theme: {theme})")
+                    memory_lines.append(
+                        f"- Memory content (verbatim): {content} (Theme: {theme})")
 
             if not memory_lines:
                 return "No memories found."
@@ -146,8 +151,7 @@ class ContextMemoryAgent(BasicAgent):
                         any(kw.lower() in theme for kw in keywords):
                     filtered_memories.append(memory)
 
-            if filtered_memories:
-                memories = filtered_memories
+            memories = filtered_memories
 
         memories = sorted(
             memories,
@@ -161,10 +165,14 @@ class ContextMemoryAgent(BasicAgent):
             theme = str(memory.get('theme', 'Unknown'))[:100]
             date = memory.get('date', '')
             time_str = memory.get('time', '')
+            content = json.dumps(message, ensure_ascii=False)
             if date and time_str:
-                memory_lines.append(f"- {message} (Theme: {theme}, Recorded: {date} {time_str})")
+                memory_lines.append(
+                    f"- Memory content (verbatim): {content} "
+                    f"(Theme: {theme}, Recorded: {date} {time_str})")
             else:
-                memory_lines.append(f"- {message} (Theme: {theme})")
+                memory_lines.append(
+                    f"- Memory content (verbatim): {content} (Theme: {theme})")
 
         if not memory_lines:
             return "No matching memories found."

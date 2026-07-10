@@ -88,6 +88,7 @@ class _AuthTestBase(unittest.TestCase):
             "_exchange": brainstem._exchange_github_for_copilot,
             "_cache": brainstem._copilot_token_cache.copy(),
             "_no_copilot": dict(brainstem._no_copilot_access),
+            "_invalid_credential": dict(brainstem._invalid_github_credential),
             "_models_fetched": brainstem._models_fetched,
             "load_agents": brainstem.load_agents,
             "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN"),
@@ -99,6 +100,7 @@ class _AuthTestBase(unittest.TestCase):
         brainstem._pending_login_file = os.path.join(self.tmp, ".copilot_pending")
         brainstem._copilot_token_cache = {"token": None, "endpoint": None, "expires_at": 0}
         brainstem._no_copilot_access = {"username": None, "at": 0}
+        brainstem._invalid_github_credential = {"fingerprint": None, "status": None, "at": 0}
         brainstem.load_agents = lambda: {}
         os.environ.pop("GITHUB_TOKEN", None)
 
@@ -119,6 +121,7 @@ class _AuthTestBase(unittest.TestCase):
         brainstem._exchange_github_for_copilot = self._orig["_exchange"]
         brainstem._copilot_token_cache = self._orig["_cache"]
         brainstem._no_copilot_access = self._orig["_no_copilot"]
+        brainstem._invalid_github_credential = self._orig["_invalid_credential"]
         brainstem._models_fetched = self._orig["_models_fetched"]
         brainstem.load_agents = self._orig["load_agents"]
         if self._orig["GITHUB_TOKEN"] is not None:
@@ -177,7 +180,78 @@ class TestNoCopilotExchange(_AuthTestBase):
         self.assertTrue(tok)
 
 
+class TestCopilotCacheIdentity(_AuthTestBase):
+
+    def _write_cache(self, github_token=None):
+        cache = {
+            "token": "cop_cached_account_a",
+            "endpoint": "https://cached.example",
+            "expires_at": time.time() + 1800,
+        }
+        if github_token:
+            cache["github_token_fingerprint"] = (
+                self.brainstem._github_token_fingerprint(github_token)
+            )
+        with open(self.brainstem._copilot_cache_file, "w", encoding="utf-8") as handle:
+            json.dump(cache, handle)
+
+    def test_matching_account_restores_persisted_session(self):
+        github_token = "ghu_account_a"
+        self._write_token(github_token)
+        self._write_cache(github_token)
+
+        token, endpoint = self.brainstem.get_copilot_token()
+
+        self.assertEqual(token, "cop_cached_account_a")
+        self.assertEqual(endpoint, "https://cached.example")
+
+    def test_other_account_or_legacy_cache_is_exchanged_fresh(self):
+        current_token = "ghu_account_b"
+        for cached_token in ("ghu_account_a", None):
+            with self.subTest(cached_token=cached_token):
+                self.brainstem._copilot_token_cache = {
+                    "token": None, "endpoint": None, "expires_at": 0,
+                }
+                self._write_token(current_token)
+                self._write_cache(cached_token)
+                self.entitled = True
+
+                token, endpoint = self.brainstem.get_copilot_token()
+
+                self.assertEqual(token, "cop_fake_token_abc")
+                self.assertEqual(endpoint, "https://api.fake.githubcopilot.com")
+                with open(self.brainstem._copilot_cache_file, encoding="utf-8") as handle:
+                    cache = json.load(handle)
+                self.assertEqual(
+                    cache["github_token_fingerprint"],
+                    self.brainstem._github_token_fingerprint(current_token),
+                )
+
+
 class TestHealthNoCopilot(_AuthTestBase):
+
+    def test_rejected_credential_reports_sign_in_not_connected(self):
+        self._write_token("ghu_expired")
+        self.brainstem._exchange_github_for_copilot = lambda token: FakeResp(
+            401, {"message": "Bad credentials"}
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Bad credentials"):
+            self.brainstem.get_copilot_token()
+
+        health = self.client.get("/health").get_json()
+        self.assertEqual(health["status"], "unauthenticated")
+        self.assertEqual(health["auth_error"], "invalid_credentials")
+
+    def test_saving_new_credential_clears_rejected_health_state(self):
+        self._write_token("ghu_expired")
+        self.brainstem._set_invalid_github_credential("ghu_expired", 401)
+
+        self.brainstem.save_github_token("ghu_replacement")
+
+        health = self.client.get("/health").get_json()
+        self.assertEqual(health["status"], "ok")
+        self.assertEqual(health["copilot"], "pending")
 
     def test_health_reports_no_copilot(self):
         """/health must surface the no-Copilot state (status stays ok — they ARE

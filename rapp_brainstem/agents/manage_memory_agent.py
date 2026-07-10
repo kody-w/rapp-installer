@@ -59,12 +59,21 @@ class ManageMemoryAgent(BasicAgent):
 
     def store_memory(self, memory_type, content, importance, tags):
         memory_id = str(uuid.uuid4())
+        try:
+            importance = max(1, min(5, int(importance)))
+        except (TypeError, ValueError):
+            importance = 3
+        if not isinstance(tags, list):
+            tags = []
+        tags = [tag for tag in tags if isinstance(tag, str)]
         memory = {
             "conversation_id": self.storage_manager.current_guid or "current",
             "session_id": "current",
             "message": content,
             "mood": "neutral",
             "theme": memory_type,
+            "importance": importance,
+            "tags": tags,
             "date": datetime.now().strftime("%Y-%m-%d"),
             "time": datetime.now().strftime("%H:%M:%S")
         }

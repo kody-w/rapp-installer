@@ -2,7 +2,7 @@
 
 A local-first AI agent server. One dependency: a GitHub account with Copilot access.
 
-The brainstem runs on your machine, uses GitHub Copilot as the LLM, auto-discovers agents from Python files, and exposes a chat API + web UI on `localhost:7071`. No API keys, no cloud setup, no config.
+The brainstem runs on your machine, uses GitHub Copilot as the LLM, auto-discovers agents from Python files, and exposes a chat API + web UI on `localhost:7071`. Core chat needs no provider API key or cloud setup beyond GitHub Copilot; optional Azure Speech and ElevenLabs voice integrations use their own credentials.
 
 ---
 
@@ -161,6 +161,7 @@ All config is via environment variables in `.env` (auto-created from `.env.examp
 | `PORT` | `7071` | Server port. |
 | `BRAINSTEM_LAN_MODE` | `false` | Set `true` to bind all interfaces. Non-loopback capability routes require the per-install secret. |
 | `BRAINSTEM_ALLOWED_HOSTS` | *(empty)* | Optional comma-separated LAN hostnames. Loopback and private IP literals are handled automatically. |
+| `VOICE_ZIP_PASSWORD` | *(empty)* | Optional password used to unlock the encrypted `voice.zip` config for Azure Speech or ElevenLabs at startup. |
 
 ### LAN access
 
