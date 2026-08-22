@@ -275,13 +275,18 @@ function Setup-Venv {
     $attempts = 2
     for ($attempt = 1; $attempt -le $attempts; $attempt++) {
         Write-Host "  Creating virtual environment..."
+        # --clear on retries: a prior Remove-Item can leave the directory behind
+        # (e.g. a locked file) and `venv` without --clear would silently reuse it.
+        $venvArgs = @("-m", "venv")
+        if ($attempt -gt 1) { $venvArgs += "--clear" }
+        $venvArgs += $VENV_DIR
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
+        & $sysPy @venvArgs 2>&1 | Out-Null
         if (-not (Test-Path (Get-VenvPython))) {
             # Some minimal Python installs need ensurepip primed before venv works.
             & $sysPy -m ensurepip --upgrade 2>&1 | Out-Null
-            & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
+            & $sysPy @venvArgs 2>&1 | Out-Null
         }
         $ErrorActionPreference = $prev
 
