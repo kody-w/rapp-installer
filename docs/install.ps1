@@ -98,6 +98,42 @@ function Install-WithWinget {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
 
+function Test-IsStorePythonPath {
+    # A genuinely installed (not just the stub) Microsoft Store Python passes every
+    # existing sanity check — it runs, reports a version, and even has ensurepip —
+    # but a venv created from it can end up with no usable pip (issue #43). Detect
+    # it by path rather than by probing, since probing looks identical to a real install.
+    param([string]$Path)
+    return ($Path -and $Path -match '\\WindowsApps\\')
+}
+
+function Find-BestPythonCommand {
+    # Probe "python3" then "python" (in that order, for compatibility with systems
+    # where only one resolves) and, when more than one candidate works, prefer
+    # whichever one is NOT the Microsoft Store install — a very common Windows
+    # configuration is Store Python 3.12 registered ahead of a real Program Files
+    # Python on PATH, and the Store one produces venvs with no pip (issue #43).
+    param([int]$MinMinor = 0)
+    $candidates = @()
+    foreach ($cmd in @("python3", "python")) {
+        try {
+            $out = & $cmd --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.(\d+)") {
+                $minor = [int]$Matches[1]
+                if ($minor -ge $MinMinor) {
+                    $resolved = $null
+                    try { $resolved = (Get-Command $cmd -ErrorAction SilentlyContinue).Source } catch {}
+                    $candidates += [pscustomobject]@{ Cmd = $cmd; Out = $out; Path = $resolved }
+                }
+            }
+        } catch {}
+    }
+    if ($candidates.Count -eq 0) { return $null }
+    $preferred = $candidates | Where-Object { -not (Test-IsStorePythonPath $_.Path) } | Select-Object -First 1
+    if ($preferred) { return $preferred }
+    return $candidates[0]
+}
+
 function Resolve-PythonExe {
     # Return a real Python 3 executable. Prefer the one Check-Prerequisites already
     # validated ($script:PythonExe); otherwise probe — this matters on the
@@ -105,14 +141,10 @@ function Resolve-PythonExe {
     # otherwise fall back to a bare "python" that may be the Windows Store alias
     # stub (it prints "Python was not found" and opens the Store instead of running).
     if ($script:PythonExe) { return $script:PythonExe }
-    foreach ($cmd in @("python3", "python")) {
-        try {
-            $out = & $cmd --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.(\d+)") {
-                $script:PythonExe = $cmd
-                return $cmd
-            }
-        } catch {}
+    $found = Find-BestPythonCommand
+    if ($found) {
+        $script:PythonExe = $found.Cmd
+        return $found.Cmd
     }
     $direct = "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe"
     if (Test-Path $direct) { $script:PythonExe = $direct; return $direct }
@@ -198,6 +230,26 @@ function Ensure-Pip {
     return $false
 }
 
+function Repair-VenvPip {
+    # A venv whose python.exe exists is NOT proof it has pip — a venv created
+    # from Microsoft Store Python can produce exactly that (issue #43). Try to
+    # bootstrap pip in-place via ensurepip against the VENV interpreter (not the
+    # system one — Ensure-Pip handles that case separately). Returns $true only
+    # when `venvPy -m pip` actually works afterwards.
+    param([string]$VenvPy)
+    if (Test-PipWorks $VenvPy) { return $true }
+    Write-Host "  [..] Virtual environment has no pip — bootstrapping via ensurepip..." -ForegroundColor Yellow
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $VenvPy -m ensurepip --upgrade --default-pip 2>&1 | ForEach-Object { Write-Host "$_" }
+    } catch {
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    return (Test-PipWorks $VenvPy)
+}
+
 function Setup-Venv {
     # Create ~/.brainstem/venv so dependencies are isolated from system/user Python
     # and the launcher always resolves the SAME interpreter that install used
@@ -208,9 +260,10 @@ function Setup-Venv {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         & $venvPy -c "import sys" 2>&1 | Out-Null
-        $ok = ($LASTEXITCODE -eq 0)
+        $importOk = ($LASTEXITCODE -eq 0)
         $ErrorActionPreference = $prev
-        if ($ok) {
+        # importOk proves the interpreter runs — NOT that pip is there (issue #43).
+        if ($importOk -and (Repair-VenvPip $venvPy)) {
             Write-Host "  [OK] Virtual environment OK" -ForegroundColor Green
             return
         }
@@ -219,28 +272,46 @@ function Setup-Venv {
     }
 
     $sysPy = Resolve-PythonExe
-    Write-Host "  Creating virtual environment..."
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
-    if (-not (Test-Path (Get-VenvPython))) {
-        # Some minimal Python installs need ensurepip primed before venv works.
-        & $sysPy -m ensurepip --upgrade 2>&1 | Out-Null
+    $attempts = 2
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        Write-Host "  Creating virtual environment..."
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
-    }
-    $ErrorActionPreference = $prev
+        if (-not (Test-Path (Get-VenvPython))) {
+            # Some minimal Python installs need ensurepip primed before venv works.
+            & $sysPy -m ensurepip --upgrade 2>&1 | Out-Null
+            & $sysPy -m venv $VENV_DIR 2>&1 | Out-Null
+        }
+        $ErrorActionPreference = $prev
 
-    if (-not (Test-Path (Get-VenvPython))) {
-        Write-Host "  [X] Failed to create virtual environment at $VENV_DIR" -ForegroundColor Red
-        throw "venv creation failed"
+        if (-not (Test-Path (Get-VenvPython))) {
+            Write-Host "  [X] Failed to create virtual environment at $VENV_DIR" -ForegroundColor Red
+            throw "venv creation failed"
+        }
+
+        $venvPy = Get-VenvPython
+        if (Repair-VenvPip $venvPy) {
+            # Upgrade pip inside the venv (best-effort; venv already ships pip).
+            # NOT discarded to Out-Null here on failure — pip already verified working.
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            & $venvPy -m pip install --upgrade pip 2>&1 | Out-Null
+            $ErrorActionPreference = $prev
+            Write-Host "  [OK] Virtual environment ready" -ForegroundColor Green
+            return
+        }
+
+        if ($attempt -lt $attempts) {
+            Write-Host "  [..] pip still missing — recreating the virtual environment once..." -ForegroundColor Yellow
+            Remove-Item -Recurse -Force $VENV_DIR -ErrorAction SilentlyContinue
+        }
     }
 
-    # Upgrade pip inside the venv (best-effort; venv already ships pip).
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & (Get-VenvPython) -m pip install --upgrade pip 2>&1 | Out-Null
-    $ErrorActionPreference = $prev
-    Write-Host "  [OK] Virtual environment ready" -ForegroundColor Green
+    Write-Host "  [X] Virtual environment at $VENV_DIR has no working pip." -ForegroundColor Red
+    Write-Host "      This often happens when the system Python is the Microsoft Store version." -ForegroundColor Yellow
+    Write-Host "      Install Python from https://python.org (with 'pip' checked) and re-run this installer." -ForegroundColor Yellow
+    throw "venv has no working pip"
 }
 
 function Check-Prerequisites {
@@ -278,20 +349,13 @@ function Check-Prerequisites {
     $pythonOk = $false
     $pythonCmd = $null
 
-    # Try multiple python command names (python3 first on some systems, then python)
-    foreach ($cmd in @("python3", "python")) {
-        try {
-            $out = & $cmd --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.(\d+)") {
-                $minor = [int]$Matches[1]
-                if ($minor -ge 11) {
-                    Write-Host "  [OK] $out" -ForegroundColor Green
-                    $pythonOk = $true
-                    $pythonCmd = $cmd
-                    break
-                }
-            }
-        } catch {}
+    # Try multiple python command names (python3 first on some systems, then python),
+    # preferring a non-Microsoft-Store install when more than one resolves (issue #43).
+    $found = Find-BestPythonCommand -MinMinor 11
+    if ($found) {
+        Write-Host "  [OK] $($found.Out)" -ForegroundColor Green
+        $pythonOk = $true
+        $pythonCmd = $found.Cmd
     }
 
     if (-not $pythonOk) {
@@ -324,16 +388,11 @@ function Check-Prerequisites {
 
         # Verify the REAL python is now reachable
         $pythonOk = $false
-        foreach ($cmd in @("python3", "python")) {
-            try {
-                $out = & $cmd --version 2>&1
-                if ($LASTEXITCODE -eq 0 -and $out -match "Python 3\.(\d+)") {
-                    Write-Host "  [OK] $out installed" -ForegroundColor Green
-                    $pythonOk = $true
-                    $pythonCmd = $cmd
-                    break
-                }
-            } catch {}
+        $found = Find-BestPythonCommand -MinMinor 11
+        if ($found) {
+            Write-Host "  [OK] $($found.Out) installed" -ForegroundColor Green
+            $pythonOk = $true
+            $pythonCmd = $found.Cmd
         }
 
         # Last resort: try the known install path directly
