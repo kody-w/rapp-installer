@@ -64,10 +64,11 @@ echo "  sandbox: $SANDBOX"
 
 # ── 1. Fake origin: bare repo whose `main` is this checkout's HEAD ────────────
 git clone --quiet --bare "$REPO_ROOT" "$BARE"
-git -C "$BARE" update-ref refs/heads/main "$(git -C "$REPO_ROOT" rev-parse HEAD)"
-git -C "$BARE" symbolic-ref HEAD refs/heads/main
+# Keep Git's safe.bareRepository=explicit guard enabled for these owned fixtures.
+git --git-dir="$BARE" update-ref refs/heads/main "$(git -C "$REPO_ROOT" rev-parse HEAD)"
+git --git-dir="$BARE" symbolic-ref HEAD refs/heads/main
 if git -C "$REPO_ROOT" rev-parse origin/main >/dev/null 2>&1; then
-    git -C "$BARE" update-ref refs/heads/production-baseline "$(git -C "$REPO_ROOT" rev-parse origin/main)"
+    git --git-dir="$BARE" update-ref refs/heads/production-baseline "$(git -C "$REPO_ROOT" rev-parse origin/main)"
 fi
 HOME="$FAKE_HOME" git config --global "url.file://$BARE.insteadOf" "https://github.com/kody-w/rapp-installer.git"
 HOME="$FAKE_HOME" git config --global user.email preflight@localhost
