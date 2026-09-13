@@ -31,6 +31,13 @@ No build step, linter, or type checker is configured.
 
 **Entry point:** `brainstem.py` — a single-file Flask server (~2,000 lines) that handles auth, chat, agent orchestration, and the web UI.
 
+**Model transport:** The Copilot catalog selects `/chat/completions` or
+`/responses`. GPT-6 Astra uses Responses for function calling. Both transports
+return Chat-shaped messages internally. `_ResponsesMessage` retains opaque
+reasoning as request-local attributes, not serialized message fields; preserve
+these receipts across agent rounds and never execute an incomplete Responses
+stream's tool calls.
+
 **Request flow (POST /chat):**
 1. Load `soul.md` (system prompt) and fresh-discover agents from `agents/`
 2. Build OpenAI-format tool definitions from agent metadata
@@ -58,7 +65,7 @@ No build step, linter, or type checker is configured.
 | `local_storage.py` | Local shim for Azure File Storage |
 | `soul.md` | Default system prompt loaded every request |
 | `index.html` | Built-in web UI served at `/` |
-| `VERSION` | Semantic version string (currently 0.6.14) |
+| `VERSION` | Semantic version string (currently 0.6.17) |
 | `CONSTITUTION.md` | Governance doc defining what belongs in this repo |
 
 ## Writing Agents
