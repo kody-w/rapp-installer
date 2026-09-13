@@ -96,7 +96,7 @@ chmod +x "$SHIMS"/lsof "$SHIMS"/open "$SHIMS"/curl
 
 # ── 3. Upgrade scenario: seed a real production-main install with user files ──
 if [ "$SCENARIO" = "upgrade" ]; then
-    if ! git -C "$BARE" rev-parse production-baseline >/dev/null 2>&1; then
+    if ! git --git-dir="$BARE" rev-parse production-baseline >/dev/null 2>&1; then
         echo "  ✗ no origin/main in this checkout — cannot seed the upgrade baseline"; exit 1
     fi
     git clone --quiet "$BARE" "$FAKE_HOME/.brainstem/src"
