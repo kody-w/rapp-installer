@@ -322,6 +322,19 @@ if pin_build_origin; then
         else
             fail "install.sh: pinned re-run (rc=$PIN_RC): $(tail -5 "$L")"
         fi
+        # RELEASING.md: to follow main again, re-run the plain one-liner. The detached
+        # pinned checkout must be re-attached to main, or no later pull could move it.
+        L="$PIN_SANDBOX/h-upgrade-unpin.log"
+        pin_run "$H" "$L" --
+        if [ "$(pgit -C "$H/.brainstem/src" symbolic-ref --quiet HEAD 2>/dev/null)" = refs/heads/main ] \
+           && [ "$(pgit -C "$H/.brainstem/src" rev-parse HEAD)" = "$(pgit --git-dir="$PIN_ORIGIN" rev-parse main)" ] \
+           && [ "$(pgit -C "$H/.brainstem/src" rev-parse --abbrev-ref 'main@{upstream}' 2>/dev/null)" = origin/main ] \
+           && grep -q "PIN-SOUL-MARKER" "$S/soul.md" && grep -q "PIN-ENV-MARKER" "$S/.env" \
+           && [ -f "$S/agents/custom_pin_agent.py" ] && pin_stopped_at_venv "$L"; then
+            pass "install.sh: un-pinning re-attaches the checkout to main (it follows main again), user files kept"
+        else
+            fail "install.sh: un-pinning (rc=$PIN_RC): HEAD $(pgit -C "$H/.brainstem/src" symbolic-ref --quiet HEAD 2>/dev/null || echo detached): $(tail -5 "$L")"
+        fi
     else
         fail "install.sh: could not seed an existing install"
     fi

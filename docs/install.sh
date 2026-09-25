@@ -370,6 +370,16 @@ at_pinned_commit() {
     [ -z "$(git status --porcelain -- $KERNEL_FILES 2>/dev/null)" ]
 }
 
+# Unpinned, an install follows main. A pinned install is a detached checkout, where a
+# plain `git pull` does nothing, so re-attach it to main at origin/main first (after a
+# fetch). Run inside the repo.
+follow_main() {
+    if ! git symbolic-ref --quiet HEAD >/dev/null 2>&1; then
+        git checkout --quiet -B main origin/main 2>/dev/null || return 1
+    fi
+    git pull --quiet 2>/dev/null
+}
+
 # A pinned switch must not lose a user's file. `git checkout` refuses to overwrite an
 # untracked file at a path the release tracks, silently overwrites an ignored one, and
 # the agent restore skips names the release ships. So before the switch, every file on
@@ -560,7 +570,7 @@ install_brainstem() {
                 # Guard the fetch: offline (or a black-holed github) must not abort the
                 # whole script under `set -e` — we fall back to whatever is already local.
                 git fetch origin --tags --quiet 2>/dev/null || true
-                git pull --quiet 2>/dev/null || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
+                follow_main || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
                 echo -e "  ${GREEN}✓${NC} Framework updated"
             fi
 
@@ -785,7 +795,10 @@ launch_brainstem() {
     # would move the install off the pinned release.
     if [ -z "$PIN_VERSION" ] && [ -d "$BRAINSTEM_HOME/src/.git" ]; then
         cd "$BRAINSTEM_HOME/src"
-        git pull --quiet 2>/dev/null || true
+        if ! git symbolic-ref --quiet HEAD >/dev/null 2>&1; then
+            git fetch --quiet origin 2>/dev/null || true
+        fi
+        follow_main || true
     fi
 
     local venv_python="$VENV_DIR/bin/python"

@@ -200,7 +200,9 @@ carries over the soul, `.env`, agents, tokens (`.copilot_token`, `.copilot_sessi
 `.brainstem_secret`, `.brainstem_model`, `voice.zip`, `.brainstem_data` and
 `.remote_agents`. To follow `main` again, clear the variable
 (`unset BRAINSTEM_VERSION` / `Remove-Item Env:BRAINSTEM_VERSION`) and re-run the
-plain one-liner.
+plain one-liner. install.sh re-attaches the detached pinned checkout to `main`;
+install.ps1 always updates from `origin main` by name, which moves a detached checkout
+too. Either way, later runs and launches follow `main` again.
 
 The RAPP/1 LTS kernel is `brainstem-v0.6.9`: the tag kody-w/RAPP's `KERNEL_PIN.json`
 freezes by SHA-256. The preflight `pin-lts` legs prove that pin on every platform.
