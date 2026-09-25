@@ -81,12 +81,13 @@ echo ""
 
 # ── version pin (install.sh + install.ps1) ───────────────────────────────────
 # Organism gap G23: a pin must work through the advertised one-liners (the
-# BRAINSTEM_VERSION variable; --version wins over it), refuse an unknown version before
-# anything changes, land exactly on the tag commit on fresh installs and upgrades, keep
-# user files, and leave the kernel byte-exact even under core.autocrlf=true (the Git for
-# Windows default). The REAL install.sh runs against a synthetic tagged origin through
-# the same url.insteadOf redirect preflight uses; a python test double stops every run
-# at the venv step, right after the source checkout (no pip, no network, no server).
+# BRAINSTEM_VERSION variable; --version wins over it), name a release tag and nothing
+# else, be checked against the remote before anything on the machine changes, land
+# exactly on the tag commit on fresh installs and upgrades, never lose a user's file, and
+# leave the kernel byte-exact even under core.autocrlf=true (the Git for Windows default).
+# The REAL install.sh runs against a synthetic tagged origin through the same
+# url.insteadOf redirect preflight uses; a python test double stops every run at the venv
+# step, right after the source checkout (no pip, no network, no server).
 
 echo "--- version pin ---"
 
@@ -100,23 +101,41 @@ PIN_KERNEL="rapp_brainstem/brainstem.py rapp_brainstem/agents/basic_agent.py rap
 pgit() { GIT_CONFIG_GLOBAL="$PIN_GITCONFIG" GIT_CONFIG_NOSYSTEM=1 git "$@"; }
 pin_git() { pgit -c user.name=pin-test -c user.email= -c core.autocrlf=false -c init.defaultBranch=main "$@"; }
 
-# Three releases: v0.0.1 and v0.0.2 tagged, main one commit ahead. basic_agent.py never
-# changes (like brainstem-v0.6.9 -> main), so a switch alone would not rewrite it.
+# Releases v0.0.1 (a lightweight tag) and v0.0.2 (an annotated tag); main is one commit
+# ahead, and a branch named like a version (v0.0.4) has no tag. basic_agent.py never
+# changes (like brainstem-v0.6.9 -> main), so a switch alone would not rewrite it. The
+# releases ship two agents main retired, one of which main ignores (the real main ignores
+# paths older tags tracked), and an extras/ folder main does not have.
 pin_build_origin() {
     local seed="$PIN_SANDBOX/seed" v
-    mkdir -p "$seed/rapp_brainstem/agents" "$PIN_SHIMS" || return 1
+    mkdir -p "$seed/rapp_brainstem/agents" "$seed/rapp_brainstem/extras" "$PIN_SHIMS" || return 1
     pin_git init --quiet "$seed" || return 1
     printf 'class BasicAgent:\n    pass\n' > "$seed/rapp_brainstem/agents/basic_agent.py"
     printf 'print("bundled")\n' > "$seed/rapp_brainstem/agents/bundled_agent.py"
+    printf 'rapp_brainstem/%s\n' .env .copilot_token .copilot_session .brainstem_secret \
+        .brainstem_data/ .remote_agents/ voice.zip > "$seed/.gitignore"
     for v in 0.0.1 0.0.2 0.0.3; do
         printf '%s\n' "$v" > "$seed/rapp_brainstem/VERSION"
         printf 'print("kernel %s")\n' "$v" > "$seed/rapp_brainstem/brainstem.py"
         printf 'default soul %s\n' "$v" > "$seed/rapp_brainstem/soul.md"
+        if [ "$v" = 0.0.3 ]; then
+            pin_git -C "$seed" rm --quiet -r rapp_brainstem/extras rapp_brainstem/agents/retired_agent.py \
+                rapp_brainstem/agents/legacy_agent.py || return 1
+            printf 'rapp_brainstem/agents/legacy_agent.py\n' >> "$seed/.gitignore"
+        else
+            printf 'print("retired %s")\n' "$v" > "$seed/rapp_brainstem/agents/retired_agent.py"
+            printf 'print("legacy %s")\n' "$v" > "$seed/rapp_brainstem/agents/legacy_agent.py"
+            printf 'notes %s\n' "$v" > "$seed/rapp_brainstem/extras/notes.txt"
+        fi
         pin_git -C "$seed" add -A || return 1
         pin_git -C "$seed" commit --quiet -m "release: v$v" || return 1
-        [ "$v" = 0.0.3 ] || pin_git -C "$seed" tag "brainstem-v$v" || return 1
+        case "$v" in
+            0.0.1) pin_git -C "$seed" tag "brainstem-v$v" || return 1 ;;
+            0.0.2) pin_git -C "$seed" tag -a -m "release v$v" "brainstem-v$v" || return 1 ;;
+        esac
     done
     pin_git -C "$seed" branch -M main || return 1
+    pin_git -C "$seed" branch v0.0.4 || return 1
     pin_git clone --quiet --bare "$seed" "$PIN_ORIGIN" || return 1
     pgit config --file "$PIN_GITCONFIG" "url.file://$PIN_ORIGIN.insteadOf" "https://github.com/kody-w/rapp-installer.git" || return 1
     # Test doubles: python answers only the installer's version probe; nothing reaches the network.
@@ -151,25 +170,64 @@ pin_seed_install() {
     printf 'print("mine")\n' > "$src/rapp_brainstem/agents/custom_pin_agent.py"
 }
 
-pin_tag_commit() { pgit --git-dir="$PIN_ORIGIN" rev-parse "brainstem-v0.0.1^{commit}"; }
-pin_at_tag() {  # HEAD is the brainstem-v0.0.1 commit, detached (no pull can move it)
+# A broken install (src without .git) holding every kind of user state.
+pin_seed_broken() {
+    local s="$1/.brainstem/src/rapp_brainstem"
+    mkdir -p "$s/agents" "$s/.brainstem_data/memory" "$s/.remote_agents" || return 1
+    printf 'BROKEN-SOUL-MARKER\n' > "$s/soul.md"
+    printf 'BROKEN-ENV-MARKER=1\n' > "$s/.env"
+    printf '{"access_token": "test-token-marker"}\n' > "$s/.copilot_token"
+    printf '{"session": "test-session-marker"}\n' > "$s/.copilot_session"
+    printf 'test-secret-marker\n' > "$s/.brainstem_secret"
+    printf 'test-model-marker\n' > "$s/.brainstem_model"
+    printf 'test-voice-marker\n' > "$s/voice.zip"
+    printf '{"memory": "kept"}\n' > "$s/.brainstem_data/memory/user_memory.json"
+    printf 'print("remote")\n' > "$s/.remote_agents/remote_agent.py"
+    printf 'print("mine")\n' > "$s/agents/custom_pin_agent.py"
+    printf 'stray\n' > "$s/stray-not-user-state.txt"
+}
+pin_broken_kept() {  # every user state file of pin_seed_broken is back
+    local s="$1/.brainstem/src/rapp_brainstem"
+    grep -q BROKEN-SOUL-MARKER "$s/soul.md" && grep -q BROKEN-ENV-MARKER "$s/.env" \
+        && grep -q test-token-marker "$s/.copilot_token" && grep -q test-session-marker "$s/.copilot_session" \
+        && grep -q test-secret-marker "$s/.brainstem_secret" && grep -q test-model-marker "$s/.brainstem_model" \
+        && grep -q test-voice-marker "$s/voice.zip" && grep -q kept "$s/.brainstem_data/memory/user_memory.json" \
+        && [ -f "$s/.remote_agents/remote_agent.py" ] && [ -f "$s/agents/custom_pin_agent.py" ]
+}
+# A digest of every file under a directory (paths and contents).
+pin_tree_sum() { (cd "$1" 2>/dev/null && find . -type f -exec cksum {} + | LC_ALL=C sort | cksum); }
+# What a refused pin must leave alone on an existing install: HEAD, the attached branch,
+# the stash list, the user's files, and every file name in rapp_brainstem/ and agents/.
+pin_state() {
     local src="$1/.brainstem/src"
-    [ "$(pgit -C "$src" rev-parse HEAD 2>/dev/null)" = "$(pin_tag_commit)" ] \
+    printf '%s|%s|%s|%s|%s|%s' "$(pgit -C "$src" rev-parse HEAD 2>/dev/null)" \
+        "$(pgit -C "$src" symbolic-ref --quiet HEAD 2>/dev/null)" \
+        "$(pgit -C "$src" stash list 2>/dev/null | wc -l | tr -d ' ')" \
+        "$(cksum < "$src/rapp_brainstem/soul.md" 2>/dev/null)" "$(cksum < "$src/rapp_brainstem/.env" 2>/dev/null)" \
+        "$(ls -a "$src/rapp_brainstem" "$src/rapp_brainstem/agents" 2>/dev/null | cksum)"
+}
+
+pin_tag_commit() { pgit --git-dir="$PIN_ORIGIN" rev-parse "${1:-brainstem-v0.0.1}^{commit}"; }
+pin_at_tag() {  # <home> [tag]: HEAD is the tag's commit, detached (no pull can move it)
+    local src="$1/.brainstem/src"
+    [ "$(pgit -C "$src" rev-parse HEAD 2>/dev/null)" = "$(pin_tag_commit "${2:-}")" ] \
         && ! pgit -C "$src" symbolic-ref --quiet HEAD >/dev/null 2>&1
 }
-pin_kernel_exact() {  # raw bytes on disk == the tag's blobs
+pin_kernel_exact() {  # <home> [tag]: raw bytes on disk == the tag's blobs
     local src="$1/.brainstem/src" f
     for f in $PIN_KERNEL; do
-        [ "$(pgit -C "$src" hash-object --no-filters -- "$f" 2>/dev/null)" = "$(pgit --git-dir="$PIN_ORIGIN" rev-parse "brainstem-v0.0.1:$f")" ] || return 1
+        [ "$(pgit -C "$src" hash-object --no-filters -- "$f" 2>/dev/null)" = "$(pgit --git-dir="$PIN_ORIGIN" rev-parse "${2:-brainstem-v0.0.1}:$f")" ] || return 1
     done
 }
 pin_stopped_at_venv() { grep -q "Failed to create virtual environment" "$1"; }
+# Refused before anything else ran: no prerequisite step, so no install, backup or clone.
+pin_refused_early() { [ "$PIN_RC" -ne 0 ] && ! grep -q "Checking prerequisites" "$1" && ! pin_stopped_at_venv "$1"; }
 
 if pin_build_origin; then
     H="$PIN_SANDBOX/h-env"; L="$PIN_SANDBOX/h-env.log"
     pin_run "$H" "$L" "BRAINSTEM_VERSION= 0.0.1 " --
-    if grep -q "Pinning to version: 0.0.1 (from BRAINSTEM_VERSION)" "$L" && pin_at_tag "$H" \
-       && pin_kernel_exact "$H" && pin_stopped_at_venv "$L"; then
+    if grep -q "Pinning to version: 0.0.1 (from BRAINSTEM_VERSION)" "$L" && grep -q "0.0.1 is release brainstem-v0.0.1" "$L" \
+       && pin_at_tag "$H" && pin_kernel_exact "$H" && pin_stopped_at_venv "$L"; then
         pass "install.sh: BRAINSTEM_VERSION alone pins a fresh install to the tag commit"
     else
         fail "install.sh: BRAINSTEM_VERSION pin (rc=$PIN_RC): $(tail -5 "$L")"
@@ -183,6 +241,14 @@ if pin_build_origin; then
         fail "install.sh: --version v-form pin (rc=$PIN_RC): $(tail -5 "$L")"
     fi
 
+    H="$PIN_SANDBOX/h-annotated"; L="$PIN_SANDBOX/h-annotated.log"
+    pin_run "$H" "$L" -- --version 0.0.2
+    if pin_at_tag "$H" brainstem-v0.0.2 && pin_kernel_exact "$H" brainstem-v0.0.2; then
+        pass "install.sh: an annotated release tag pins to the commit it names"
+    else
+        fail "install.sh: annotated tag pin (rc=$PIN_RC): $(tail -5 "$L")"
+    fi
+
     H="$PIN_SANDBOX/h-wins"; L="$PIN_SANDBOX/h-wins.log"
     pin_run "$H" "$L" BRAINSTEM_VERSION=9.9.9 -- --version brainstem-v0.0.1
     if pin_at_tag "$H" && pin_kernel_exact "$H"; then
@@ -191,29 +257,49 @@ if pin_build_origin; then
         fail "install.sh: --version precedence (rc=$PIN_RC): $(tail -5 "$L")"
     fi
 
+    # Refused on a factory machine before anything happens: no prerequisite step, no clone.
     H="$PIN_SANDBOX/h-unknown"; L="$PIN_SANDBOX/h-unknown.log"
     pin_run "$H" "$L" BRAINSTEM_VERSION=0.0.1 -- --version 9.9.9
-    if [ "$PIN_RC" -ne 0 ] && grep -q "Version 9.9.9 not found" "$L" && grep -q "brainstem-v0.0.1" "$L" \
-       && ! pin_stopped_at_venv "$L"; then
-        pass "install.sh: an unknown pin is refused with the available versions"
+    if pin_refused_early "$L" && grep -q "Version 9.9.9 not found" "$L" && grep -q "brainstem-v0.0.1" "$L" \
+       && grep -q "brainstem-v0.0.2" "$L" && [ ! -e "$H/.brainstem" ]; then
+        pass "install.sh: an unknown pin is refused with the available versions, and nothing is installed or cloned"
     else
         fail "install.sh: unknown pin refusal (rc=$PIN_RC): $(tail -5 "$L")"
     fi
 
-    H="$PIN_SANDBOX/h-novalue"; L="$PIN_SANDBOX/h-novalue.log"
+    H="$PIN_SANDBOX/h-branchpin"; L="$PIN_SANDBOX/h-branchpin.log"
+    pin_run "$H" "$L" "BRAINSTEM_VERSION=main" --
+    if pin_refused_early "$L" && grep -q "'main' is not a release version" "$L" && [ ! -e "$H/.brainstem" ]; then
+        pass "install.sh: BRAINSTEM_VERSION=main is refused on a factory machine, nothing installed or cloned"
+    else
+        fail "install.sh: BRAINSTEM_VERSION=main on a factory machine (rc=$PIN_RC): $(tail -5 "$L")"
+    fi
+
+    # --version is trimmed first, then an empty value is refused (it never falls back to the
+    # variable or to main).
+    for blank in "" " " $'\t'; do
+        H="$PIN_SANDBOX/h-novalue"; L="$PIN_SANDBOX/h-novalue.log"
+        rm -rf "$H"
+        pin_run "$H" "$L" BRAINSTEM_VERSION=0.0.1 -- --version "$blank"
+        if [ "$PIN_RC" -ne 0 ] && grep -q "needs a value" "$L" && [ ! -e "$H/.brainstem" ]; then
+            pass "install.sh: --version '$(printf '%q' "$blank")' is refused before anything changes"
+        else
+            fail "install.sh: blank --version '$(printf '%q' "$blank")' (rc=$PIN_RC): $(tail -5 "$L")"
+        fi
+    done
+    H="$PIN_SANDBOX/h-bare"; L="$PIN_SANDBOX/h-bare.log"
     pin_run "$H" "$L" -- --version
     if [ "$PIN_RC" -ne 0 ] && grep -q "needs a value" "$L" && [ ! -e "$H/.brainstem" ]; then
         pass "install.sh: --version without a value is refused before anything changes"
     else
         fail "install.sh: bare --version (rc=$PIN_RC): $(tail -5 "$L")"
     fi
-
-    H="$PIN_SANDBOX/h-file"; L="$PIN_SANDBOX/h-file.log"
-    pin_run "$H" "$L" -- --version rapp_brainstem/VERSION
-    if [ "$PIN_RC" -ne 0 ] && grep -q "not found" "$L" && ! pin_stopped_at_venv "$L"; then
-        pass "install.sh: a file name is not accepted as a version"
+    H="$PIN_SANDBOX/h-blankenv"; L="$PIN_SANDBOX/h-blankenv.log"
+    pin_run "$H" "$L" "BRAINSTEM_VERSION= " --
+    if ! grep -q "Pinning to version" "$L" && [ "$(pgit -C "$H/.brainstem/src" rev-parse HEAD 2>/dev/null)" = "$(pgit --git-dir="$PIN_ORIGIN" rev-parse main)" ]; then
+        pass "install.sh: a whitespace-only BRAINSTEM_VERSION is no pin (like install.ps1)"
     else
-        fail "install.sh: file-name pin (rc=$PIN_RC): $(tail -5 "$L")"
+        fail "install.sh: whitespace-only BRAINSTEM_VERSION (rc=$PIN_RC): $(tail -5 "$L")"
     fi
 
     H="$PIN_SANDBOX/h-upgrade"; L="$PIN_SANDBOX/h-upgrade.log"
@@ -240,16 +326,34 @@ if pin_build_origin; then
         fail "install.sh: could not seed an existing install"
     fi
 
+    # Only a release tag is a version: branches, HEAD, commits and paths are refused on an
+    # existing install before anything changes, including a version-shaped branch.
+    H="$PIN_SANDBOX/h-notrelease"; L="$PIN_SANDBOX/h-notrelease.log"
+    if pin_seed_install "$H"; then
+        FULL=$(pin_tag_commit)
+        BEFORE=$(pin_state "$H")
+        for bad in main HEAD HEAD~1 "$FULL" "${FULL:0:7}" rapp_brainstem/VERSION ../../outside \
+                   v0.0.4 0.0.4 brainstem-0.0.1 V0.0.1 refs/tags/brainstem-v0.0.1 'brainstem-v0.0.1^{commit}'; do
+            pin_run "$H" "$L" -- --version "$bad"
+            if pin_refused_early "$L" && grep -qE "is not a release version|Version .* not found" "$L" \
+               && [ "$(pin_state "$H")" = "$BEFORE" ]; then
+                pass "install.sh: --version $bad is refused on an existing install before anything changes"
+            else
+                fail "install.sh: --version $bad on an existing install (rc=$PIN_RC): $(tail -4 "$L")"
+            fi
+        done
+    else
+        fail "install.sh: could not seed an existing install"
+    fi
+
     H="$PIN_SANDBOX/h-refuse"; L="$PIN_SANDBOX/h-refuse.log"
     S="$H/.brainstem/src/rapp_brainstem"
     if pin_seed_install "$H"; then
-        BEFORE=$(pgit -C "$H/.brainstem/src" rev-parse HEAD)
+        BEFORE=$(pin_state "$H")
         pin_run "$H" "$L" -- --version 9.9.9
-        if [ "$PIN_RC" -ne 0 ] && grep -q "Version 9.9.9 not found" "$L" \
-           && [ "$(pgit -C "$H/.brainstem/src" rev-parse HEAD)" = "$BEFORE" ] \
+        if pin_refused_early "$L" && grep -q "Version 9.9.9 not found" "$L" && [ "$(pin_state "$H")" = "$BEFORE" ] \
            && pgit -C "$H/.brainstem/src" symbolic-ref --quiet HEAD >/dev/null \
-           && [ -z "$(pgit -C "$H/.brainstem/src" stash list)" ] && grep -q "PIN-SOUL-MARKER" "$S/soul.md" \
-           && grep -q "PIN-ENV-MARKER" "$S/.env" && [ -f "$S/agents/custom_pin_agent.py" ]; then
+           && [ -z "$(pgit -C "$H/.brainstem/src" stash list)" ] && grep -q "PIN-SOUL-MARKER" "$S/soul.md"; then
             pass "install.sh: an unknown pin on an existing install leaves it and the user's files untouched"
         else
             fail "install.sh: unknown pin on upgrade (rc=$PIN_RC): $(tail -5 "$L")"
@@ -258,20 +362,78 @@ if pin_build_origin; then
         fail "install.sh: could not seed an existing install"
     fi
 
+    # A broken install (src without .git): a refused pin must not wipe it; a good pin
+    # re-clones it and carries every kind of user state over, tokens included.
     H="$PIN_SANDBOX/h-broken"; L="$PIN_SANDBOX/h-broken.log"
-    S="$H/.brainstem/src/rapp_brainstem"
-    mkdir -p "$S/agents" "$S/.brainstem_data"
-    printf 'BROKEN-SOUL-MARKER\n' > "$S/soul.md"
-    printf 'BROKEN-ENV-MARKER=1\n' > "$S/.env"
-    printf 'print("mine")\n' > "$S/agents/custom_pin_agent.py"
-    printf '{"memory": "kept"}\n' > "$S/.brainstem_data/memory.json"
-    pin_run "$H" "$L" -- --version 9.9.9
-    if [ "$PIN_RC" -ne 0 ] && grep -q "Version 9.9.9 not found" "$L" && grep -q "BROKEN-SOUL-MARKER" "$S/soul.md" \
-       && grep -q "BROKEN-ENV-MARKER" "$S/.env" && [ -f "$S/agents/custom_pin_agent.py" ] \
-       && grep -q "kept" "$S/.brainstem_data/memory.json"; then
-        pass "install.sh: a refused pin over a broken install still restores the user's files"
+    if pin_seed_broken "$H"; then
+        SUM=$(pin_tree_sum "$H/.brainstem")
+        pin_run "$H" "$L" -- --version 9.9.9
+        if pin_refused_early "$L" && grep -q "Version 9.9.9 not found" "$L" && [ "$(pin_tree_sum "$H/.brainstem")" = "$SUM" ]; then
+            pass "install.sh: a refused pin over a broken install leaves every file as it was"
+        else
+            fail "install.sh: refused pin over a broken install (rc=$PIN_RC): $(tail -5 "$L")"
+        fi
+        L="$PIN_SANDBOX/h-broken-pin.log"
+        pin_run "$H" "$L" -- --version 0.0.1
+        if pin_at_tag "$H" && pin_kernel_exact "$H" && pin_broken_kept "$H" && pin_stopped_at_venv "$L"; then
+            pass "install.sh: a pin over a broken install keeps soul, .env, tokens, session, secret, model, voice, memories and agents"
+        else
+            fail "install.sh: pin over a broken install (rc=$PIN_RC): $(tail -6 "$L")"
+        fi
     else
-        fail "install.sh: refused pin over a broken install (rc=$PIN_RC): $(tail -5 "$L")"
+        fail "install.sh: could not seed a broken install"
+    fi
+    H="$PIN_SANDBOX/h-broken-plain"; L="$PIN_SANDBOX/h-broken-plain.log"
+    if pin_seed_broken "$H"; then
+        pin_run "$H" "$L" --
+        if pin_broken_kept "$H" && pin_stopped_at_venv "$L"; then
+            pass "install.sh: an unpinned re-clone over a broken install keeps the same user state"
+        else
+            fail "install.sh: unpinned re-clone over a broken install (rc=$PIN_RC): $(tail -6 "$L")"
+        fi
+    else
+        fail "install.sh: could not seed a broken install"
+    fi
+
+    # A file of the user's at a path the release ships is kept beside the release's copy:
+    # an untracked one (a plain checkout refuses it; --force would destroy it) and an
+    # ignored one (a plain checkout silently overwrites it).
+    H="$PIN_SANDBOX/h-blockers"; L="$PIN_SANDBOX/h-blockers.log"
+    S="$H/.brainstem/src/rapp_brainstem"
+    if pin_seed_install "$H"; then
+        printf 'MINE-RETIRED\n' > "$S/agents/retired_agent.py"
+        printf 'MINE-LEGACY\n' > "$S/agents/legacy_agent.py"
+        pin_run "$H" "$L" -- --version 0.0.1
+        if pin_at_tag "$H" && pin_kernel_exact "$H" && pin_stopped_at_venv "$L" \
+           && grep -q 'retired 0.0.1' "$S/agents/retired_agent.py" && grep -q 'legacy 0.0.1' "$S/agents/legacy_agent.py" \
+           && grep -qx MINE-RETIRED "$S"/agents/retired_agent.py.bak-* && grep -qx MINE-LEGACY "$S"/agents/legacy_agent.py.bak-* \
+           && grep -q "yours is kept beside it" "$L" && grep -q "PIN-SOUL-MARKER" "$S/soul.md"; then
+            pass "install.sh: user files at paths the release ships are kept beside its copies (.bak-<date>)"
+        else
+            fail "install.sh: user files at release paths (rc=$PIN_RC): $(tail -6 "$L")"
+        fi
+    else
+        fail "install.sh: could not seed an existing install"
+    fi
+
+    # Anything else in the way is never forced: the switch is refused, named, and the
+    # install put back as it was (set-aside files, and the edits the stash took).
+    H="$PIN_SANDBOX/h-blocked"; L="$PIN_SANDBOX/h-blocked.log"
+    S="$H/.brainstem/src/rapp_brainstem"
+    if pin_seed_install "$H"; then
+        printf 'MINE-RETIRED\n' > "$S/agents/retired_agent.py"
+        printf 'MINE-EXTRAS\n' > "$S/extras"
+        BEFORE=$(pin_state "$H")
+        pin_run "$H" "$L" -- --version 0.0.1
+        if [ "$PIN_RC" -ne 0 ] && grep -q "Could not check out brainstem-v0.0.1" "$L" && grep -q "rapp_brainstem/extras" "$L" \
+           && [ "$(pin_state "$H")" = "$BEFORE" ] && grep -qx MINE-EXTRAS "$S/extras" \
+           && grep -qx MINE-RETIRED "$S/agents/retired_agent.py" && ! pin_stopped_at_venv "$L"; then
+            pass "install.sh: a switch git refuses is never forced; the install is put back as it was"
+        else
+            fail "install.sh: refused switch (rc=$PIN_RC): $(tail -6 "$L")"
+        fi
+    else
+        fail "install.sh: could not seed an existing install"
     fi
 
     H="$PIN_SANDBOX/h-branch"; L="$PIN_SANDBOX/h-branch.log"
@@ -291,7 +453,8 @@ if pin_build_origin; then
     elif command -v powershell >/dev/null 2>&1; then PS_RUNNER=powershell
     fi
     if [ -n "$PS_RUNNER" ]; then
-        PS_OUT=$("$PS_RUNNER" -NoProfile -NonInteractive -File "$REPO_ROOT/tests/test_install_pin.ps1" "$PIN_ORIGIN" "$PIN_SANDBOX" 2>&1) || true
+        PS_OUT=$(GIT_CONFIG_GLOBAL="$PIN_GITCONFIG" GIT_CONFIG_NOSYSTEM=1 \
+            "$PS_RUNNER" -NoProfile -NonInteractive -File "$REPO_ROOT/tests/test_install_pin.ps1" "$PIN_ORIGIN" "$PIN_SANDBOX" 2>&1) || true
         while IFS= read -r line; do
             case "$line" in
                 "PASS "*) pass "install.ps1: ${line#PASS }" ;;
