@@ -329,6 +329,54 @@ jobs:
           assert 'PreflightCustom' in (d.get('agents') or []), d.get('agents')
           print('custom agent survived upgrade')"
 
+      # A pin that names no release (or a bare --version) must be refused with a clear
+      # message BEFORE anything changes: same commit, no new stash of the user's edits,
+      # same soul. Run against the pinned install left by the leg above.
+      - name: bad pins are refused and change nothing (pin-lts-upgrade, unix)
+        if: matrix.scenario == 'pin-lts-upgrade' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$HOME/.brainstem/src"
+          state() { echo "$(git -C "$SRC" rev-parse HEAD) $(git -C "$SRC" stash list | wc -l) $(git -C "$SRC" hash-object rapp_brainstem/soul.md)"; }
+          BEFORE="$(state)"
+          refused() {  # refused <expected message> <installer args...>
+            local want="$1" rc=0 out
+            shift
+            out="$(bash install.sh "$@" </dev/null 2>&1)" || rc=$?
+            echo "$out" | tail -4
+            test "$rc" -ne 0 || { echo "::error::'$*' was not refused"; exit 1; }
+            grep -q "$want" <<<"$out" || { echo "::error::'$*' gave no clear refusal"; exit 1; }
+            test "$(state)" = "$BEFORE" || { echo "::error::'$*' changed the install"; exit 1; }
+          }
+          refused "Version 9.9.9 not found" --version 9.9.9
+          refused "needs a value" --version
+          echo "bad pins refused; install unchanged: $BEFORE"
+
+      - name: bad pins are refused and change nothing (pin-lts-upgrade, windows)
+        if: matrix.scenario == 'pin-lts-upgrade' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $src = "$env:USERPROFILE\.brainstem\src"
+          function Get-InstallState {
+              "$(git -C $src rev-parse HEAD) $(@(git -C $src stash list).Count) $((Get-FileHash "$src\rapp_brainstem\soul.md").Hash)"
+          }
+          $before = Get-InstallState
+          function Assert-Refused {
+              param([string]$Want, [string[]]$InstallerArgs)
+              $out = & powershell -NoProfile -ExecutionPolicy Bypass -File "$PWD\install.ps1" @InstallerArgs 2>&1 | Out-String
+              $code = $LASTEXITCODE
+              ($out -split "`n" | Select-Object -Last 6) -join "`n" | Write-Host
+              if ($code -eq 0) { Write-Host "::error::'$InstallerArgs' was not refused"; exit 1 }
+              if ($out -notmatch $Want) { Write-Host "::error::'$InstallerArgs' gave no clear refusal"; exit 1 }
+              if ((Get-InstallState) -ne $before) { Write-Host "::error::'$InstallerArgs' changed the install"; exit 1 }
+          }
+          Assert-Refused -Want 'Version 9\.9\.9 not found' -InstallerArgs @('--version', '9.9.9')
+          Assert-Refused -Want 'needs a value' -InstallerArgs @('--version')
+          Write-Host "bad pins refused; install unchanged: $before"
+          exit 0
+
       - name: collect installer log
         if: always()
         shell: bash
