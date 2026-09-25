@@ -624,7 +624,7 @@ function Install-Brainstem {
                     Write-Host "  [OK] Framework updated" -ForegroundColor Green
                 }
             } elseif ($PIN_VERSION) {
-                Write-Host "  [X] Could not check out $TagRef — keeping existing files (v$LocalVer)" -ForegroundColor Red
+                Write-Host "  [X] Could not check out $TagRef - keeping existing files (v$LocalVer)" -ForegroundColor Red
             } else {
                 Write-Host "  [!] Update download failed — keeping existing files (v$LocalVer)" -ForegroundColor Yellow
             }
@@ -732,7 +732,7 @@ function Install-Brainstem {
             if (-not $PinFailure) { Write-Host "  [OK] Checked out $TagRef" -ForegroundColor Green }
         }
 
-        # Restore any preserved user files over the fresh checkout — also when the pin
+        # Restore any preserved user files over the fresh checkout, also when the pin
         # was refused, so they are never stranded in the temporary backup.
         if ($FreshBackup) {
             $AgentsDir = "$BRAINSTEM_HOME\src\rapp_brainstem\agents"

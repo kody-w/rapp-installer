@@ -334,6 +334,7 @@ jobs:
       # same soul. Run against the pinned install left by the leg above.
       - name: bad pins are refused and change nothing (pin-lts-upgrade, unix)
         if: matrix.scenario == 'pin-lts-upgrade' && runner.os != 'Windows'
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -355,6 +356,7 @@ jobs:
 
       - name: bad pins are refused and change nothing (pin-lts-upgrade, windows)
         if: matrix.scenario == 'pin-lts-upgrade' && runner.os == 'Windows'
+        timeout-minutes: 5
         shell: powershell
         run: |
           $ErrorActionPreference = 'Continue'
@@ -363,17 +365,21 @@ jobs:
               "$(git -C $src rev-parse HEAD) $(@(git -C $src stash list).Count) $((Get-FileHash "$src\rapp_brainstem\soul.md").Hash)"
           }
           $before = Get-InstallState
+          # The production decode path (the script as a UTF-8 string through a scriptblock,
+          # as `irm` delivers it). Like `irm | iex`, it returns quietly on failure by design,
+          # so the refusal is judged by its message and an unchanged install, not an exit code.
           function Assert-Refused {
-              param([string]$Want, [string[]]$InstallerArgs)
-              $out = & powershell -NoProfile -ExecutionPolicy Bypass -File "$PWD\install.ps1" @InstallerArgs 2>&1 | Out-String
-              $code = $LASTEXITCODE
-              ($out -split "`n" | Select-Object -Last 6) -join "`n" | Write-Host
-              if ($code -eq 0) { Write-Host "::error::'$InstallerArgs' was not refused"; exit 1 }
-              if ($out -notmatch $Want) { Write-Host "::error::'$InstallerArgs' gave no clear refusal"; exit 1 }
-              if ((Get-InstallState) -ne $before) { Write-Host "::error::'$InstallerArgs' changed the install"; exit 1 }
+              param([string]$Want, [string]$PinArgs)
+              $boot = "& ([scriptblock]::Create((Get-Content -Raw -Encoding UTF8 '$PWD\install.ps1'))) $PinArgs"
+              $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($boot))
+              $out = & powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc 2>&1 | Out-String
+              if ($out -notmatch '\[X\] Install failed') { Write-Host $out; Write-Host "::error::'$PinArgs' was not refused"; exit 1 }
+              if ($out -notmatch $Want) { Write-Host $out; Write-Host "::error::'$PinArgs' gave no clear refusal"; exit 1 }
+              if ((Get-InstallState) -ne $before) { Write-Host "::error::'$PinArgs' changed the install"; exit 1 }
+              Write-Host "refused as expected: $PinArgs"
           }
-          Assert-Refused -Want 'Version 9\.9\.9 not found' -InstallerArgs @('--version', '9.9.9')
-          Assert-Refused -Want 'needs a value' -InstallerArgs @('--version')
+          Assert-Refused -Want 'Version 9\.9\.9 not found' -PinArgs '--version 9.9.9'
+          Assert-Refused -Want 'needs a value' -PinArgs '--version'
           Write-Host "bad pins refused; install unchanged: $before"
           exit 0
 
