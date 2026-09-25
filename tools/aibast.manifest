@@ -28,6 +28,7 @@ verbatim release-notes.html
 verbatim skill.md
 verbatim tests/preflight_local.sh
 verbatim tests/test_installer.sh
+verbatim tests/test_install_pin.ps1
 binary   MSFTAIBASMultiAgentCopilot_1_0_0_5.zip
 
 # ---- Pages mirrors: regenerated from the just-synced roots, never hand-edited ----
