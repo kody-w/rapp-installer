@@ -1,5 +1,6 @@
 # RAPP Brainstem Installer for Windows
 # Usage: irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
+# Pin a version: $env:BRAINSTEM_VERSION = "0.6.9"; irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
 #
 # Works on a factory Windows 11 install — auto-installs Python, Git, and GitHub CLI via winget.
 
@@ -20,18 +21,39 @@ $REPO_URL = "https://github.com/kody-w/rapp-installer.git"
 $REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
 $VENV_DIR = "$env:USERPROFILE\.brainstem\venv"
 
-# Optional version pin: `--version vX.Y.Z` (also accepts a bare 0.6.14 or the release
-# tag form brainstem-v0.6.14). Parsed from the script arguments so a user can pin or
-# RC-test a specific release on Windows, e.g.
+# Optional version pin: 0.6.14, v0.6.14, or the release tag form brainstem-v0.6.14.
+# The advertised `irm ... | iex` one-liner cannot pass script arguments, so the pin can
+# come from the environment:
+#   $env:BRAINSTEM_VERSION = "0.6.14"; irm https://.../install.ps1 | iex
+# or from `--version`, which wins over the variable:
 #   & ([scriptblock]::Create((irm https://.../install.ps1))) --version v0.6.14
-$PIN_VERSION = ""
-$argList = @($args)
-for ($i = 0; $i -lt $argList.Count; $i++) {
-    if ($argList[$i] -eq "--version" -and ($i + 1) -lt $argList.Count) {
-        $PIN_VERSION = [string]$argList[$i + 1]
-        $i++
+function Get-PinRequest {
+    param([object[]]$ArgList, [string]$EnvValue)
+    $pin = @{ Version = ""; Source = ""; Error = "" }
+    if ($EnvValue -and $EnvValue.Trim()) {
+        $pin.Version = $EnvValue.Trim()
+        $pin.Source = "BRAINSTEM_VERSION"
     }
+    for ($i = 0; $i -lt $ArgList.Count; $i++) {
+        if ([string]$ArgList[$i] -eq "--version") {
+            $value = ""
+            if (($i + 1) -lt $ArgList.Count) { $value = ([string]$ArgList[$i + 1]).Trim() }
+            if ($value) {
+                $pin.Version = $value
+                $pin.Source = "--version"
+            } else {
+                $pin.Error = "--version needs a value, e.g. --version 0.6.9"
+            }
+            $i++
+        }
+    }
+    return $pin
 }
+$PIN_REQUEST = Get-PinRequest -ArgList @($args) -EnvValue $env:BRAINSTEM_VERSION
+$PIN_VERSION = $PIN_REQUEST.Version
+# The kernel ("grail") files a pinned install must reproduce byte-for-byte: the set
+# RAPP's KERNEL_PIN.json freezes by SHA-256.
+$KERNEL_FILES = @("rapp_brainstem/brainstem.py", "rapp_brainstem/agents/basic_agent.py", "rapp_brainstem/VERSION")
 
 function Print-Banner {
     Write-Host ""
@@ -417,21 +439,89 @@ function Test-SoulHashInManifest {
     return $false
 }
 
+function Get-PinBareVersion {
+    # 0.6.9, v0.6.9 and brainstem-v0.6.9 all name release 0.6.9.
+    param([string]$Pin)
+    return (($Pin -replace '^brainstem-', '') -replace '^v', '')
+}
+
 function Resolve-PinnedTag {
-    # Resolve a --version pin against every tag form we ship: the documented v0.6.14
-    # UX, a bare 0.6.14, and the actual release tag brainstem-v0.6.14. Returns the
-    # matching git ref, or $null. Assumes the current directory is the repo.
+    # Resolve a pin against every tag form we ship: the documented v0.6.14 UX, a bare
+    # 0.6.14, and the actual release tag brainstem-v0.6.14. Returns the matching git
+    # ref, or $null. Only a real commit counts (without --verify, rev-parse would echo
+    # a stray file name back as a "version"). Assumes the current directory is the repo.
     param([string]$Pin)
     $bare = $Pin -replace '^v', ''
     foreach ($cand in @($Pin, "v$bare", "brainstem-$bare", "brainstem-v$bare")) {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        git rev-parse $cand 2>&1 | Out-Null
+        git rev-parse --verify --quiet "$cand^{commit}" 2>&1 | Out-Null
         $ok = ($LASTEXITCODE -eq 0)
         $ErrorActionPreference = $prev
         if ($ok) { return $cand }
     }
     return $null
+}
+
+function Write-UnknownPin {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    Write-Host "  [X] Version $PIN_VERSION not found. Available versions:" -ForegroundColor Red
+    git tag -l 'brainstem-v*' 'v*' 2>&1 | Sort-Object | ForEach-Object { Write-Host "    $_" }
+    $ErrorActionPreference = $prev
+}
+
+function Test-AtPinnedCommit {
+    # True when the checkout already is the pinned commit, detached (so no later pull
+    # can move it), with no local edits to the kernel. Assumes the current directory
+    # is the repo.
+    param([string]$Ref)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $want = git rev-parse --verify --quiet "$Ref^{commit}" 2>$null
+        $head = git rev-parse --verify --quiet HEAD 2>$null
+        if ((-not $want) -or ("$head" -ne "$want")) { return $false }
+        git symbolic-ref --quiet HEAD 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $false }
+        $dirty = git status --porcelain -- $KERNEL_FILES 2>$null
+        return (-not $dirty)
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+function Sync-PinnedKernel {
+    # A pinned install must run the release's kernel bytes exactly. A checkout does not
+    # guarantee that: files the switch did not change keep whatever bytes an earlier
+    # clone wrote, and core.autocrlf=true (the Git for Windows default) writes CRLF line
+    # endings. Rewrite any kernel file whose raw bytes differ from the tag's blob
+    # straight from the tag with line-ending conversion off, then report the result.
+    # Assumes the current directory is the repo.
+    param([string]$Ref)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $drift = @()
+    try {
+        foreach ($f in $KERNEL_FILES) {
+            $want = git rev-parse --verify --quiet "$($Ref):$f" 2>$null
+            if (-not $want) { continue }
+            $have = git hash-object --no-filters -- $f 2>$null
+            if ("$have" -ne "$want") {
+                Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+                git -c core.autocrlf=false -c core.eol=lf checkout --quiet $Ref -- $f 2>&1 | Out-Null
+                $have = git hash-object --no-filters -- $f 2>$null
+            }
+            if ("$have" -ne "$want") { $drift += $f }
+        }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($drift.Count -gt 0) {
+        Write-Host "  [!] Kernel files still differ from ${Ref}: $($drift -join ', ')" -ForegroundColor Yellow
+    } else {
+        Write-Host "  [OK] Kernel matches $Ref byte-for-byte" -ForegroundColor Green
+    }
 }
 
 function Install-Brainstem {
@@ -442,28 +532,53 @@ function Install-Brainstem {
         New-Item -ItemType Directory -Force -Path $BRAINSTEM_HOME | Out-Null
     }
 
+    $TagRef = $null
     if (Test-Path "$BRAINSTEM_HOME\src\.git") {
         # Smart update — preserve soul, agents, config
         $LocalVer = "0.0.0"
         $VerFile = "$BRAINSTEM_HOME\src\rapp_brainstem\VERSION"
         if (Test-Path $VerFile) { $LocalVer = (Get-Content $VerFile -Raw).Trim() }
+        $NeedSwitch = $true
         if ($PIN_VERSION) {
-            $RemoteVer = ($PIN_VERSION -replace '^v', '')
+            $RemoteVer = Get-PinBareVersion $PIN_VERSION
+            # Resolve the pin BEFORE touching anything: an unknown version must leave the
+            # existing install, and the user's files, exactly as they were.
+            Push-Location "$BRAINSTEM_HOME\src"
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            git remote set-url origin $REPO_URL 2>&1 | Out-Null
+            git fetch --tags --quiet origin 2>&1 | Out-Null
+            $TagRef = Resolve-PinnedTag $PIN_VERSION
+            # Compare commits, not VERSION strings: a checkout whose VERSION matches can
+            # still be a different commit (or a branch a later pull would move).
+            if ($TagRef) { $NeedSwitch = -not (Test-AtPinnedCommit $TagRef) } else { Write-UnknownPin }
+            $ErrorActionPreference = $prevEAP
+            Pop-Location
+            if (-not $TagRef) { throw "pinned version $PIN_VERSION not found" }
         } else {
             try { $RemoteVer = (Invoke-WebRequest -Uri $REMOTE_VERSION_URL -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $RemoteVer = "0.0.0" }
+            $NeedSwitch = ($LocalVer -ne $RemoteVer)
         }
 
         Write-Host "  Local:  v$LocalVer"
         if ($PIN_VERSION) {
-            Write-Host "  Target: v$RemoteVer (pinned)"
+            Write-Host "  Target: v$RemoteVer (pinned: $TagRef)"
         } else {
             Write-Host "  Remote: v$RemoteVer"
         }
 
-        if ($LocalVer -eq $RemoteVer) {
-            Write-Host "  [OK] Already up to date (v$LocalVer)" -ForegroundColor Green
+        if (-not $NeedSwitch) {
+            if ($PIN_VERSION) {
+                Write-Host "  [OK] Already on v$LocalVer ($TagRef)" -ForegroundColor Green
+            } else {
+                Write-Host "  [OK] Already up to date (v$LocalVer)" -ForegroundColor Green
+            }
         } else {
-            Write-Host "  Upgrading v$LocalVer -> v$RemoteVer..."
+            if ($PIN_VERSION) {
+                Write-Host "  Switching v$LocalVer -> v$RemoteVer..."
+            } else {
+                Write-Host "  Upgrading v$LocalVer -> v$RemoteVer..."
+            }
             $Backup = "$env:TEMP\brainstem-upgrade-$(Get-Random)"
             New-Item -ItemType Directory -Force -Path $Backup | Out-Null
 
@@ -484,21 +599,14 @@ function Install-Brainstem {
             $prevEAP = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             git remote set-url origin $REPO_URL 2>&1 | Out-Null
-            $TagRef = $null
             if ($PIN_VERSION) {
-                # Pin/RC-test: fetch tags and check out the requested release tag
-                # (accepts v0.6.14 / 0.6.14 / brainstem-v0.6.14 forms like install.sh).
+                # Pin/RC-test: check out the release tag resolved above. If an edit the
+                # stash could not take still blocks the switch, force it: the user's soul,
+                # agents and .env were backed up above and are restored below.
                 git stash 2>&1 | Out-Null
-                git fetch --tags --quiet origin 2>&1 | Out-Null
-                $TagRef = Resolve-PinnedTag $PIN_VERSION
-                $pullOk = $false
-                if ($TagRef) {
-                    git checkout --quiet $TagRef 2>&1 | Out-Null
-                    $pullOk = ($LASTEXITCODE -eq 0)
-                } else {
-                    Write-Host "  [X] Version $PIN_VERSION not found. Available versions:" -ForegroundColor Red
-                    git tag -l 'brainstem-v*' 'v*' 2>&1 | Sort-Object | ForEach-Object { Write-Host "    $_" }
-                }
+                git checkout --quiet $TagRef 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { git checkout --quiet --force $TagRef 2>&1 | Out-Null }
+                $pullOk = ($LASTEXITCODE -eq 0)
             } else {
                 git fetch --quiet origin main 2>&1 | Out-Null
                 $pullOk = ($LASTEXITCODE -eq 0)
@@ -509,15 +617,14 @@ function Install-Brainstem {
             }
             $ErrorActionPreference = $prevEAP
             Pop-Location
-            if ($PIN_VERSION -and -not $TagRef) {
-                throw "pinned version $PIN_VERSION not found"
-            }
             if ($pullOk) {
                 if ($PIN_VERSION) {
                     Write-Host "  [OK] Checked out $TagRef" -ForegroundColor Green
                 } else {
                     Write-Host "  [OK] Framework updated" -ForegroundColor Green
                 }
+            } elseif ($PIN_VERSION) {
+                Write-Host "  [X] Could not check out $TagRef — keeping existing files (v$LocalVer)" -ForegroundColor Red
             } else {
                 Write-Host "  [!] Update download failed — keeping existing files (v$LocalVer)" -ForegroundColor Yellow
             }
@@ -568,11 +675,15 @@ function Install-Brainstem {
             # if the pull failed the banner must not claim a successful upgrade.
             $NewVer = $LocalVer
             if (Test-Path $VerFile) { $NewVer = (Get-Content $VerFile -Raw).Trim() }
-            if ($pullOk -and $NewVer -ne $LocalVer) {
+            if ($pullOk -and $PIN_VERSION) {
+                Write-Host "  [OK] Pinned: v$LocalVer -> v$NewVer ($TagRef)" -ForegroundColor Green
+            } elseif ($pullOk -and $NewVer -ne $LocalVer) {
                 Write-Host "  [OK] Upgrade complete: v$LocalVer -> v$NewVer" -ForegroundColor Green
             } elseif ($pullOk) {
                 Write-Host "  [OK] Already at the latest framework (v$NewVer)" -ForegroundColor Green
             }
+            # A pin that did not land must not go on to launch whatever was there before.
+            if ($PIN_VERSION -and -not $pullOk) { throw "could not check out $TagRef" }
         }
     } else {
         # A broken prior install (src present but .git gone) may still hold the user's
@@ -580,6 +691,7 @@ function Install-Brainstem {
         # them before wiping so a re-run can't silently destroy the user's work
         # (issue #21). The common case (no existing src) skips all of this.
         $FreshBackup = $null
+        $PinFailure = $null
         $srcRapp = "$BRAINSTEM_HOME\src\rapp_brainstem"
         if (Test-Path $srcRapp) {
             $FreshBackup = "$env:TEMP\brainstem-fresh-$(Get-Random)"
@@ -610,17 +722,18 @@ function Install-Brainstem {
             $TagRef = Resolve-PinnedTag $PIN_VERSION
             if ($TagRef) {
                 git checkout --quiet $TagRef 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { $PinFailure = "could not check out $TagRef" }
             } else {
-                Write-Host "  [X] Version $PIN_VERSION not found. Available versions:" -ForegroundColor Red
-                git tag -l 'brainstem-v*' 'v*' 2>&1 | Sort-Object | ForEach-Object { Write-Host "    $_" }
+                Write-UnknownPin
+                $PinFailure = "pinned version $PIN_VERSION not found"
             }
             $ErrorActionPreference = $prevEAP
             Pop-Location
-            if (-not $TagRef) { throw "pinned version $PIN_VERSION not found" }
-            Write-Host "  [OK] Checked out $TagRef" -ForegroundColor Green
+            if (-not $PinFailure) { Write-Host "  [OK] Checked out $TagRef" -ForegroundColor Green }
         }
 
-        # Restore any preserved user files over the fresh checkout.
+        # Restore any preserved user files over the fresh checkout — also when the pin
+        # was refused, so they are never stranded in the temporary backup.
         if ($FreshBackup) {
             $AgentsDir = "$BRAINSTEM_HOME\src\rapp_brainstem\agents"
             if (Test-Path "$FreshBackup\soul.md") { Copy-Item "$FreshBackup\soul.md" "$BRAINSTEM_HOME\src\rapp_brainstem\soul.md" -Force -ErrorAction SilentlyContinue }
@@ -634,6 +747,12 @@ function Install-Brainstem {
             Remove-Item -Recurse -Force $FreshBackup -ErrorAction SilentlyContinue
             Write-Host "  [OK] Preserved your soul, agents, memories, and config" -ForegroundColor Green
         }
+        if ($PinFailure) { throw $PinFailure }
+    }
+    if ($PIN_VERSION) {
+        Push-Location "$BRAINSTEM_HOME\src"
+        Sync-PinnedKernel $TagRef
+        Pop-Location
     }
     Write-Host "  [OK] Source code ready" -ForegroundColor Green
 }
@@ -977,8 +1096,11 @@ function Launch-Brainstem {
 function Main {
     Print-Banner
 
+    # A malformed pin stops here, before anything on the machine changes.
+    if ($PIN_REQUEST.Error) { throw $PIN_REQUEST.Error }
+
     if ($PIN_VERSION) {
-        Write-Host "  Pinning to version: $PIN_VERSION" -ForegroundColor Cyan
+        Write-Host "  Pinning to version: $PIN_VERSION (from $($PIN_REQUEST.Source))" -ForegroundColor Cyan
         Write-Host ""
     }
 

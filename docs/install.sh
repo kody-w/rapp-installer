@@ -4,13 +4,21 @@ set -e
 # RAPP Brainstem Installer
 # Usage: curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash
 # Pin a version: curl ... install.sh | bash -s -- --version v0.6.0
+#            or: curl ... install.sh | BRAINSTEM_VERSION=0.6.0 bash
+# Any tag form works (0.6.0, v0.6.0, brainstem-v0.6.0); --version wins over the variable.
 
 BRAINSTEM_HOME="$HOME/.brainstem"
 BRAINSTEM_BIN="$HOME/.local/bin"
 VENV_DIR="$BRAINSTEM_HOME/venv"
 REPO_URL="https://github.com/kody-w/rapp-installer.git"
 REMOTE_VERSION_URL="https://raw.githubusercontent.com/kody-w/rapp-installer/main/rapp_brainstem/VERSION"
-PIN_VERSION=""
+PIN_VERSION="${BRAINSTEM_VERSION:-}"
+PIN_SOURCE="${PIN_VERSION:+BRAINSTEM_VERSION}"
+PIN_ERROR=""
+TAG_REF=""
+# The kernel ("grail") files a pinned install must reproduce byte-for-byte: the set
+# RAPP's KERNEL_PIN.json freezes by SHA-256.
+KERNEL_FILES="rapp_brainstem/brainstem.py rapp_brainstem/agents/basic_agent.py rapp_brainstem/VERSION"
 
 # Colors
 RED='\033[0;31m'
@@ -273,6 +281,70 @@ maybe_refresh_soul() {
     return 0
 }
 
+# ── version pin helpers ──────────────────────────────────────────────────────────
+# A pin names a release in any tag form we ship: the documented v0.6.0 UX, a bare
+# 0.6.0, or the actual release tag brainstem-v0.6.0.
+pin_bare_version() {
+    local v="${1#brainstem-}"
+    echo "${v#v}"
+}
+
+# Print the git ref PIN_VERSION resolves to, or return 1. Only a real commit counts
+# (without --verify, rev-parse would echo a stray file name back as a "version").
+# Run inside the repo.
+resolve_pin_ref() {
+    local bare="${PIN_VERSION#v}" cand
+    for cand in "$PIN_VERSION" "v${bare}" "brainstem-${bare}" "brainstem-v${bare}"; do
+        if git rev-parse --verify --quiet "${cand}^{commit}" >/dev/null 2>&1; then
+            echo "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+refuse_unknown_pin() {
+    echo -e "  ${RED}✗${NC} Version ${PIN_VERSION} not found. Available versions:"
+    git tag -l 'brainstem-v*' 'v*' | sort -V | sed 's/^/    /'
+}
+
+# True when the checkout already is the pinned commit, detached (so no later pull can
+# move it), with no local edits to the kernel. Run inside the repo.
+at_pinned_commit() {
+    local want head
+    want=$(git rev-parse --verify --quiet "${1}^{commit}" 2>/dev/null) || return 1
+    head=$(git rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
+    [ "$head" = "$want" ] || return 1
+    if git symbolic-ref --quiet HEAD >/dev/null 2>&1; then return 1; fi
+    # shellcheck disable=SC2086 # KERNEL_FILES is a space-separated path list
+    [ -z "$(git status --porcelain -- $KERNEL_FILES 2>/dev/null)" ]
+}
+
+# A pinned install must run the release's kernel bytes exactly. A checkout does not
+# guarantee that: files the switch did not change keep whatever bytes an earlier clone
+# wrote, and core.autocrlf=true (the Git for Windows default) writes CRLF line endings.
+# Rewrite any kernel file whose raw bytes differ from the tag's blob straight from the
+# tag with line-ending conversion off, then report the result.
+sync_pinned_kernel() {
+    local ref="$1" f want have drift=""
+    cd "$BRAINSTEM_HOME/src"
+    for f in $KERNEL_FILES; do
+        want=$(git rev-parse --verify --quiet "${ref}:${f}" 2>/dev/null) || continue
+        have=$(git hash-object --no-filters -- "$f" 2>/dev/null) || have=""
+        if [ "$have" != "$want" ]; then
+            rm -f "$f"
+            git -c core.autocrlf=false -c core.eol=lf checkout --quiet "$ref" -- "$f" 2>/dev/null || true
+            have=$(git hash-object --no-filters -- "$f" 2>/dev/null) || have=""
+        fi
+        [ "$have" = "$want" ] || drift="$drift $f"
+    done
+    if [ -n "$drift" ]; then
+        echo -e "  ${YELLOW}⚠${NC} Kernel files still differ from ${ref}:${drift}"
+    else
+        echo -e "  ${GREEN}✓${NC} Kernel matches ${ref} byte-for-byte"
+    fi
+}
+
 install_brainstem() {
     echo ""
     echo "Installing RAPP Brainstem..."
@@ -289,25 +361,36 @@ install_brainstem() {
         local LOCAL_VER="0.0.0"
         [ -f "$LOCAL_VERSION_FILE" ] && LOCAL_VER=$(cat "$LOCAL_VERSION_FILE" 2>/dev/null || echo "0.0.0")
 
-        local TARGET_VER
+        local TARGET_VER NEED_SWITCH=true
         if [ -n "$PIN_VERSION" ]; then
-            # Strip leading 'v' for comparison (v0.6.0 → 0.6.0)
-            TARGET_VER="${PIN_VERSION#v}"
+            TARGET_VER="$(pin_bare_version "$PIN_VERSION")"
+            # Resolve the pin BEFORE touching anything: an unknown version must leave the
+            # existing install, and the user's files, exactly as they were.
+            cd "$BRAINSTEM_HOME/src"
+            git fetch origin --tags --quiet 2>/dev/null || true
+            if ! TAG_REF=$(resolve_pin_ref); then
+                refuse_unknown_pin
+                exit 1
+            fi
+            # Compare commits, not VERSION strings: a checkout whose VERSION matches can
+            # still be a different commit (or a branch a later pull would move).
+            if at_pinned_commit "$TAG_REF"; then NEED_SWITCH=false; fi
         else
             TARGET_VER=$(curl -sf "$REMOTE_VERSION_URL" 2>/dev/null || echo "0.0.0")
+            if [ "$LOCAL_VER" = "$TARGET_VER" ]; then NEED_SWITCH=false; fi
         fi
 
         echo "  Local:  v${LOCAL_VER}"
-        echo "  Target: v${TARGET_VER}${PIN_VERSION:+ (pinned)}"
+        echo "  Target: v${TARGET_VER}${PIN_VERSION:+ (pinned: ${TAG_REF})}"
 
-        if [ "$LOCAL_VER" = "$TARGET_VER" ]; then
-            echo -e "  ${GREEN}✓${NC} Already on v${LOCAL_VER}"
+        if [ "$NEED_SWITCH" = false ]; then
+            echo -e "  ${GREEN}✓${NC} Already on v${LOCAL_VER}${PIN_VERSION:+ (${TAG_REF})}"
         else
             echo "  Switching v${LOCAL_VER} → v${TARGET_VER}..."
 
             # 1. Backup user's local files (soul, custom agents, .env)
-            local BACKUP="/tmp/brainstem-upgrade-$$"
-            mkdir -p "$BACKUP"
+            local BACKUP
+            BACKUP=$(mktemp -d "${TMPDIR:-/tmp}/brainstem-upgrade-XXXXXX")
             [ -f "$SOUL_FILE" ] && cp "$SOUL_FILE" "$BACKUP/soul.md"
             [ -f "$ENV_FILE" ] && cp "$ENV_FILE" "$BACKUP/.env"
             if [ -d "$AGENTS_DIR" ]; then
@@ -318,27 +401,23 @@ install_brainstem() {
             echo -e "  ${GREEN}✓${NC} Backed up soul, agents, config"
 
             # 2. Fetch and checkout target version.
-            # Guard the fetch: offline (or a black-holed github) must not abort the
-            # whole script under `set -e` — we fall back to whatever is already local.
             cd "$BRAINSTEM_HOME/src"
             git stash --quiet 2>/dev/null || true
-            git fetch origin --tags --quiet 2>/dev/null || true
+            local PIN_FAILED=""
             if [ -n "$PIN_VERSION" ]; then
-                # Resolve the pin against every tag form we ship: the documented
-                # v0.6.0 UX, a bare 0.6.0, and the actual release tag brainstem-v0.6.0.
-                TAG_REF=""
-                for cand in "$PIN_VERSION" "v${PIN_VERSION#v}" "brainstem-${PIN_VERSION#v}" "brainstem-v${PIN_VERSION#v}"; do
-                    if git rev-parse "$cand" >/dev/null 2>&1; then TAG_REF="$cand"; break; fi
-                done
-                if [ -n "$TAG_REF" ]; then
-                    git checkout "$TAG_REF" --quiet 2>/dev/null
+                # The pin was resolved (and its tags fetched) above. If an edit the stash
+                # could not take still blocks the switch, force it: the user's soul, agents
+                # and .env were backed up above and are restored below.
+                if git checkout --quiet "$TAG_REF" 2>/dev/null || git checkout --quiet --force "$TAG_REF" 2>/dev/null; then
                     echo -e "  ${GREEN}✓${NC} Checked out ${TAG_REF}"
                 else
-                    echo -e "  ${RED}✗${NC} Version ${PIN_VERSION} not found. Available versions:"
-                    git tag -l 'brainstem-v*' 'v*' | sort -V | sed 's/^/    /'
-                    exit 1
+                    echo -e "  ${RED}✗${NC} Could not check out ${TAG_REF} — keeping existing files (v${LOCAL_VER})"
+                    PIN_FAILED=1
                 fi
             else
+                # Guard the fetch: offline (or a black-holed github) must not abort the
+                # whole script under `set -e` — we fall back to whatever is already local.
+                git fetch origin --tags --quiet 2>/dev/null || true
                 git pull --quiet 2>/dev/null || git reset --hard origin/main --quiet 2>/dev/null || echo -e "  ${YELLOW}Warning: Could not update${NC}"
                 echo -e "  ${GREEN}✓${NC} Framework updated"
             fi
@@ -380,7 +459,13 @@ install_brainstem() {
 
             # 4. Clean up backup
             rm -rf "$BACKUP"
-            echo -e "  ${GREEN}✓${NC} ${PIN_VERSION:+Pinned to}${PIN_VERSION:-Upgrade complete:} v${TARGET_VER}"
+            # A pin that did not land must not go on to launch whatever was there before.
+            if [ -n "$PIN_FAILED" ]; then exit 1; fi
+            if [ -n "$PIN_VERSION" ]; then
+                echo -e "  ${GREEN}✓${NC} Pinned to ${TAG_REF} (v${TARGET_VER})"
+            else
+                echo -e "  ${GREEN}✓${NC} Upgrade complete: v${TARGET_VER}"
+            fi
         fi
     else
         echo "  Fresh install — cloning repository..."
@@ -400,23 +485,22 @@ install_brainstem() {
         rm -rf "$BRAINSTEM_HOME/src" 2>/dev/null || true
         git clone --quiet "$REPO_URL" "$BRAINSTEM_HOME/src"
         # If pinning, checkout the specific tag after clone (accepts every tag form).
+        local PIN_FAILED=""
         if [ -n "$PIN_VERSION" ]; then
             cd "$BRAINSTEM_HOME/src"
             git fetch origin --tags --quiet 2>/dev/null || true
-            TAG_REF=""
-            for cand in "$PIN_VERSION" "v${PIN_VERSION#v}" "brainstem-${PIN_VERSION#v}" "brainstem-v${PIN_VERSION#v}"; do
-                if git rev-parse "$cand" >/dev/null 2>&1; then TAG_REF="$cand"; break; fi
-            done
-            if [ -n "$TAG_REF" ]; then
-                git checkout "$TAG_REF" --quiet 2>/dev/null
+            if ! TAG_REF=$(resolve_pin_ref); then
+                refuse_unknown_pin
+                PIN_FAILED=1
+            elif git checkout --quiet "$TAG_REF" 2>/dev/null; then
                 echo -e "  ${GREEN}✓${NC} Checked out ${TAG_REF}"
             else
-                echo -e "  ${RED}✗${NC} Version ${PIN_VERSION} not found. Available versions:"
-                git tag -l 'brainstem-v*' 'v*' | sort -V | sed 's/^/    /'
-                exit 1
+                echo -e "  ${RED}✗${NC} Could not check out ${TAG_REF}"
+                PIN_FAILED=1
             fi
         fi
-        # Restore any preserved user files over the fresh checkout.
+        # Restore any preserved user files over the fresh checkout — also when the pin
+        # was refused, so they are never stranded in the temporary backup.
         if [ -n "$FRESH_BACKUP" ]; then
             [ -f "$FRESH_BACKUP/soul.md" ] && cp "$FRESH_BACKUP/soul.md" "$SOUL_FILE" 2>/dev/null || true
             [ -f "$FRESH_BACKUP/.env" ] && cp "$FRESH_BACKUP/.env" "$ENV_FILE" 2>/dev/null || true
@@ -430,6 +514,10 @@ install_brainstem() {
             rm -rf "$FRESH_BACKUP"
             echo -e "  ${GREEN}✓${NC} Preserved your soul, agents, memories, and config"
         fi
+        if [ -n "$PIN_FAILED" ]; then exit 1; fi
+    fi
+    if [ -n "$PIN_VERSION" ]; then
+        sync_pinned_kernel "$TAG_REF"
     fi
     echo -e "  ${GREEN}✓${NC} Source code ready"
 }
@@ -555,8 +643,9 @@ create_env() {
 launch_brainstem() {
     export PATH="$BRAINSTEM_BIN:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-    # Always pull latest code before launching
-    if [ -d "$BRAINSTEM_HOME/src/.git" ]; then
+    # Always pull latest code before launching — unless a version is pinned: a pull
+    # would move the install off the pinned release.
+    if [ -z "$PIN_VERSION" ] && [ -d "$BRAINSTEM_HOME/src/.git" ]; then
         cd "$BRAINSTEM_HOME/src"
         git pull --quiet 2>/dev/null || true
     fi
@@ -780,23 +869,36 @@ with open(sys.argv[2], 'w') as f: json.dump(out, f)
 }
 
 main() {
-    # Parse arguments (e.g. --version v0.6.0)
+    # Parse arguments (e.g. --version v0.6.0). --version wins over BRAINSTEM_VERSION.
     while [ $# -gt 0 ]; do
         case "$1" in
             --version)
-                PIN_VERSION="$2"
-                shift 2
+                if [ -z "${2:-}" ]; then
+                    PIN_ERROR="--version needs a value, e.g. --version 0.6.9"
+                    shift
+                else
+                    PIN_VERSION="$2"
+                    PIN_SOURCE="--version"
+                    shift 2
+                fi
                 ;;
             *)
                 shift
                 ;;
         esac
     done
+    PIN_VERSION=$(printf '%s' "$PIN_VERSION" | tr -d '[:space:]')
 
     print_banner
 
+    # A malformed pin stops here, before anything on the machine changes.
+    if [ -n "$PIN_ERROR" ]; then
+        echo -e "  ${RED}✗${NC} ${PIN_ERROR}"
+        exit 1
+    fi
+
     if [ -n "$PIN_VERSION" ]; then
-        echo -e "  ${CYAN}Pinning to version: ${PIN_VERSION}${NC}"
+        echo -e "  ${CYAN}Pinning to version: ${PIN_VERSION} (from ${PIN_SOURCE})${NC}"
         echo ""
     fi
 
