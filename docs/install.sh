@@ -372,9 +372,11 @@ at_pinned_commit() {
 
 # Unpinned, an install follows main. A pinned install is a detached checkout, where a
 # plain `git pull` does nothing, so re-attach it to main at origin/main first (after a
-# fetch). Run inside the repo.
+# fetch). Only ever forward: if origin/main does not contain the checkout (a stale or
+# missing origin/main, say after a failed fetch), leave it where it is. Run inside the repo.
 follow_main() {
     if ! git symbolic-ref --quiet HEAD >/dev/null 2>&1; then
+        git merge-base --is-ancestor HEAD origin/main 2>/dev/null || return 1
         git checkout --quiet -B main origin/main 2>/dev/null || return 1
     fi
     git pull --quiet 2>/dev/null

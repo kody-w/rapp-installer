@@ -204,7 +204,7 @@ pin_state() {
         "$(pgit -C "$src" symbolic-ref --quiet HEAD 2>/dev/null)" \
         "$(pgit -C "$src" stash list 2>/dev/null | wc -l | tr -d ' ')" \
         "$(cksum < "$src/rapp_brainstem/soul.md" 2>/dev/null)" "$(cksum < "$src/rapp_brainstem/.env" 2>/dev/null)" \
-        "$(ls -a "$src/rapp_brainstem" "$src/rapp_brainstem/agents" 2>/dev/null | cksum)"
+        "$(find "$src/rapp_brainstem" "$src/rapp_brainstem/agents" -mindepth 1 -maxdepth 1 2>/dev/null | LC_ALL=C sort | cksum)"
 }
 
 pin_tag_commit() { pgit --git-dir="$PIN_ORIGIN" rev-parse "${1:-brainstem-v0.0.1}^{commit}"; }
@@ -459,6 +459,94 @@ if pin_build_origin; then
         fi
     else
         fail "install.sh: could not seed a same-VERSION branch"
+    fi
+
+    # Un-pinning when main's VERSION equals the pinned release's: no upgrade runs, so the
+    # launch step must re-attach the detached checkout, and only ever forward. These runs
+    # reach launch_brainstem: stand-ins answer for the venv python and pip, lsof and open,
+    # and curl (the remote VERSION, the local health probe; nothing else is reachable).
+    LAUNCH_SHIMS="$PIN_SANDBOX/launch-shims"
+    mkdir -p "$LAUNCH_SHIMS"
+    # shellcheck disable=SC2016 # the stand-ins' own $* and ${...} expand when they run
+    printf '#!/bin/bash\ncase "$*" in\n  *rapp_brainstem/VERSION*) echo "${PIN_REMOTE_VERSION:-0.0.0}"; exit 0 ;;\n  *localhost:7071*) exit 0 ;;\nesac\nexit 7\n' > "$LAUNCH_SHIMS/curl"
+    printf '#!/bin/bash\nexit 1\n' > "$LAUNCH_SHIMS/lsof"
+    for v in open xdg-open; do printf '#!/bin/bash\nexit 0\n' > "$LAUNCH_SHIMS/$v"; done
+    chmod +x "$LAUNCH_SHIMS"/*
+    pin_standin_venv() {  # <home>: a venv whose python answers the installer's checks and "runs" the server
+        local v="$1/.brainstem/venv/bin"
+        mkdir -p "$v" || return 1
+        # shellcheck disable=SC2016 # the stand-in's own $* and $(...) expand when it runs
+        printf '#!/bin/bash\ncase "$*" in *brainstem.py*) echo "STAND-IN SERVER $(git rev-parse HEAD 2>/dev/null)"; exit 0 ;; esac\nexit 0\n' > "$v/python"
+        printf '#!/bin/bash\nexit 0\n' > "$v/pip"
+        chmod +x "$v/python" "$v/pip"
+    }
+    pin_launch_run() {  # <home> <log>: the plain one-liner, unpinned, with main's VERSION at 0.0.2
+        # launch_brainstem puts ~/.local/bin, then /opt/homebrew/bin and /usr/local/bin, ahead
+        # of PATH, so the stand-ins also go into the sandbox's ~/.local/bin: no real curl,
+        # lsof or open ever runs.
+        mkdir -p "$1/.local/bin" && cp "$LAUNCH_SHIMS"/* "$1/.local/bin/" || return 1
+        PIN_RC=0
+        env -u BRAINSTEM_VERSION HOME="$1" TMPDIR="$PIN_SANDBOX" GIT_CONFIG_GLOBAL="$PIN_GITCONFIG" \
+            GIT_CONFIG_NOSYSTEM=1 PIN_REMOTE_VERSION=0.0.2 PATH="$LAUNCH_SHIMS:$PIN_SHIMS:$PATH" \
+            bash "$REPO_ROOT/install.sh" >"$2" 2>&1 </dev/null || PIN_RC=$?
+    }
+
+    H="$PIN_SANDBOX/h-launch"; L="$PIN_SANDBOX/h-launch-pin.log"
+    S="$H/.brainstem/src/rapp_brainstem"
+    if pin_seed_install "$H" && pgit -C "$H/.brainstem/src" checkout --quiet -- rapp_brainstem/soul.md; then
+        pin_run "$H" "$L" -- --version 0.0.2
+        pin_standin_venv "$H"
+        if pin_at_tag "$H" brainstem-v0.0.2; then
+            # The pin restored the user's soul (main's text) over the release's. A switch
+            # would overwrite that edit, so git refuses it: the launch keeps the install as it
+            # is, on the release, and loses nothing.
+            SOUL_SUM=$(cksum < "$S/soul.md")
+            L="$PIN_SANDBOX/h-launch-edited.log"
+            pin_launch_run "$H" "$L"
+            if grep -q "Already up to date (v0.0.2)" "$L" && grep -q "STAND-IN SERVER $(pin_tag_commit brainstem-v0.0.2)" "$L" \
+               && pin_at_tag "$H" brainstem-v0.0.2 && [ "$(cksum < "$S/soul.md")" = "$SOUL_SUM" ]; then
+                pass "install.sh: at launch, a switch that would overwrite a user's edit is not made; the install stays as it was"
+            else
+                fail "install.sh: launch with an edited soul (rc=$PIN_RC): $(tail -5 "$L")"
+            fi
+            # With nothing in the way, the launch re-attaches the checkout to main.
+            pgit -C "$H/.brainstem/src" checkout --quiet -- rapp_brainstem/soul.md
+            L="$PIN_SANDBOX/h-launch.log"
+            pin_launch_run "$H" "$L"
+            if grep -q "Already up to date (v0.0.2)" "$L" && grep -q "STAND-IN SERVER $(pgit --git-dir="$PIN_ORIGIN" rev-parse main)" "$L" \
+               && [ "$(pgit -C "$H/.brainstem/src" symbolic-ref --quiet HEAD 2>/dev/null)" = refs/heads/main ] \
+               && [ "$(pgit -C "$H/.brainstem/src" rev-parse HEAD)" = "$(pgit --git-dir="$PIN_ORIGIN" rev-parse main)" ] \
+               && grep -q "PIN-ENV-MARKER" "$S/.env" && [ -f "$S/agents/custom_pin_agent.py" ]; then
+                pass "install.sh: at launch, an un-pinned detached checkout is re-attached to main (same VERSION, no upgrade)"
+            else
+                fail "install.sh: launch re-attach (rc=$PIN_RC): HEAD $(pgit -C "$H/.brainstem/src" symbolic-ref --quiet HEAD 2>/dev/null || echo detached): $(tail -5 "$L")"
+            fi
+        else
+            fail "install.sh: could not pin the launch install (rc=$PIN_RC): $(tail -5 "$L")"
+        fi
+    else
+        fail "install.sh: could not seed the launch install"
+    fi
+
+    H="$PIN_SANDBOX/h-launch-stale"; L="$PIN_SANDBOX/h-launch-stale-pin.log"
+    if pin_seed_install "$H" && pgit -C "$H/.brainstem/src" checkout --quiet -- rapp_brainstem/soul.md; then
+        pin_run "$H" "$L" -- --version 0.0.2
+        pin_standin_venv "$H"
+        # Offline with a stale origin/main older than the pinned release: the fetch fails,
+        # and the launch must not move the install back to that older main. The soul is the
+        # release's own, so no local edit stands in the way: only the forward-only rule does.
+        pgit -C "$H/.brainstem/src" checkout --quiet -- rapp_brainstem/soul.md
+        pgit -C "$H/.brainstem/src" update-ref refs/remotes/origin/main "$(pin_tag_commit brainstem-v0.0.1)"
+        pgit -C "$H/.brainstem/src" remote set-url origin "file://$PIN_SANDBOX/no-such-origin.git"
+        L="$PIN_SANDBOX/h-launch-stale.log"
+        pin_launch_run "$H" "$L"
+        if grep -q "STAND-IN SERVER $(pin_tag_commit brainstem-v0.0.2)" "$L" && pin_at_tag "$H" brainstem-v0.0.2; then
+            pass "install.sh: at launch, a stale origin/main never moves an un-pinned checkout backwards"
+        else
+            fail "install.sh: launch with a stale origin/main (rc=$PIN_RC): HEAD $(pgit -C "$H/.brainstem/src" rev-parse --short HEAD 2>/dev/null) $(pgit -C "$H/.brainstem/src" symbolic-ref --quiet HEAD 2>/dev/null || echo detached): $(tail -5 "$L")"
+        fi
+    else
+        fail "install.sh: could not seed the stale-origin launch install"
     fi
 
     PS_RUNNER=""
