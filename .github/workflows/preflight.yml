@@ -14,6 +14,17 @@
 #   fresh-nopip — Windows only: Python exists but has NO pip module (corp-managed
 #             images, stripped installs — the machine class behind the v0.6.2
 #             field failure). The installer must bootstrap pip itself.
+#   pin-lts-fresh   — factory machine pinned to the RAPP/1 LTS kernel tag through the
+#             advertised one-liner and the BRAINSTEM_VERSION variable (Windows: the
+#             `irm | iex` path, which cannot pass arguments). First, pins that name no
+#             release must be refused with nothing installed or created.
+#   pin-lts-upgrade — machine running REAL production main, pinned to the LTS tag with
+#             --version (Windows: the scriptblock form); asserts user files survive,
+#             including a user's own file at a path the tag ships (kept beside the
+#             tag's copy), then that pins naming no release change nothing
+#   Both pin legs assert the checkout IS the tag commit, the three kernel files match
+#   RAPP's KERNEL_PIN.json SHA-256 values and the tag's blobs byte-for-byte, and
+#   /health reports the tag's version.
 #
 # See RELEASING.md for the full release process this belongs to.
 
@@ -62,7 +73,7 @@ jobs:
       - name: PowerShell parse + PS 5.1 compatibility
         shell: pwsh
         run: |
-          $files = @('install.ps1', 'rapp_brainstem/start.ps1', 'community_rapp/install.ps1', 'deploy.ps1')
+          $files = @('install.ps1', 'rapp_brainstem/start.ps1', 'community_rapp/install.ps1', 'deploy.ps1', 'tests/test_install_pin.ps1')
           $bad = $false
           foreach ($f in $files) {
             $errs = $null
@@ -101,11 +112,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        scenario: [fresh, upgrade]
+        scenario: [fresh, upgrade, pin-lts-fresh, pin-lts-upgrade]
         include:
           - os: windows-latest
             scenario: fresh-nopip
     runs-on: ${{ matrix.os }}
+    env:
+      SCENARIO: ${{ matrix.scenario }}
+      # The RAPP/1 LTS kernel: kody-w/RAPP's KERNEL_PIN.json pins
+      # kody-w/rapp-installer@brainstem-v0.6.9 (its frozen SHA-256s are asserted below).
+      LTS_TAG: brainstem-v0.6.9
+      LTS_COMMIT: bded0e1d5044d293f465e3850758f4b012d95078
+      LTS_VERSION: 0.6.9
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,9 +163,15 @@ jobs:
           BARE_URL="file://$(echo "$BARE" | sed 's|\\|/|g; s|^\([A-Za-z]\):|/\1:|')"
           git config --global "url.${BARE_URL}.insteadOf" "https://github.com/kody-w/rapp-installer.git"
           echo "BARE=$BARE" >> "$GITHUB_ENV"
+          # Pinned installs resolve release tags against this origin, so it must carry them.
+          case "$SCENARIO" in
+            pin-lts-*)
+              test "$(git --git-dir="$BARE" rev-parse --verify "refs/tags/$LTS_TAG^{commit}")" = "$LTS_COMMIT" \
+                || { echo "::error::fake origin does not carry $LTS_TAG at $LTS_COMMIT"; exit 1; } ;;
+          esac
 
       - name: seed existing production install (upgrade only)
-        if: matrix.scenario == 'upgrade'
+        if: matrix.scenario == 'upgrade' || matrix.scenario == 'pin-lts-upgrade'
         shell: bash
         run: |
           set -euxo pipefail
@@ -168,6 +192,14 @@ jobs:
           echo "" >> "$HOME/.brainstem/src/rapp_brainstem/soul.md"
           echo "PREFLIGHT-SOUL-MARKER" >> "$HOME/.brainstem/src/rapp_brainstem/soul.md"
           printf 'GITHUB_MODEL=auto\nPORT=7071\n# PREFLIGHT-ENV-MARKER\n' > "$HOME/.brainstem/src/rapp_brainstem/.env"
+          if [ "$SCENARIO" = pin-lts-upgrade ]; then
+            # A user's own file at a path the LTS tag ships but main does not track: the
+            # pinned switch must keep it beside the tag's copy, never destroy it.
+            F=rapp_brainstem/test_polish.py
+            test -z "$(git -C "$HOME/.brainstem/src" ls-files -- "$F")"
+            git --git-dir="$BARE" cat-file -e "$LTS_TAG:$F"
+            echo "# PREFLIGHT-USER-FILE-MARKER" > "$HOME/.brainstem/src/$F"
+          fi
 
       # Auth + remote-version checks must fail FAST and GRACEFULLY (that graceful
       # degradation is itself part of what we're testing). Black-hole the endpoints.
@@ -180,17 +212,70 @@ jobs:
         shell: powershell
         run: Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "127.0.0.1 github.com", "127.0.0.1 raw.githubusercontent.com"
 
+      # A pin that names no release must be refused on a factory machine before anything
+      # happens: no prerequisite step, nothing installed, cloned or created.
+      - name: bad pins change nothing on a factory machine (pin-lts-fresh, unix)
+        if: matrix.scenario == 'pin-lts-fresh' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$HOME/.brainstem" || { echo "::error::not a factory machine: $HOME/.brainstem exists"; exit 1; }
+          for pin in 9.9.9 main; do
+            rc=0
+            out="$(cat install.sh | BRAINSTEM_VERSION="$pin" bash 2>&1)" || rc=$?
+            echo "$out" | tail -4
+            test "$rc" -ne 0 || { echo "::error::BRAINSTEM_VERSION=$pin was not refused"; exit 1; }
+            grep -qE "Version $pin not found|'$pin' is not a release version" <<<"$out" \
+              || { echo "::error::BRAINSTEM_VERSION=$pin gave no clear refusal"; exit 1; }
+            if grep -q "Checking prerequisites" <<<"$out"; then echo "::error::prerequisites ran before $pin was refused"; exit 1; fi
+            test ! -e "$HOME/.brainstem" || { echo "::error::BRAINSTEM_VERSION=$pin left $HOME/.brainstem behind"; exit 1; }
+          done
+          echo "bad pins refused on a factory machine; nothing installed or created"
+
+      - name: bad pins change nothing on a factory machine (pin-lts-fresh, windows)
+        if: matrix.scenario == 'pin-lts-fresh' && runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $installDir = "$env:USERPROFILE\.brainstem"
+          if (Test-Path $installDir) { Write-Host "::error::not a factory machine: $installDir exists"; exit 1 }
+          foreach ($pin in @('9.9.9', 'main')) {
+              # `$env:BRAINSTEM_VERSION = '...'; irm ... | iex`: the script as UTF-8 text through iex.
+              # Like `irm | iex`, it returns quietly on failure by design, so the refusal is
+              # judged by its message and by nothing having been created.
+              $boot = "`$env:BRAINSTEM_VERSION = '$pin'; iex (Get-Content -Raw -Encoding UTF8 '$PWD\install.ps1')"
+              $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($boot))
+              $out = & powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc 2>&1 | Out-String
+              Write-Host $out
+              $p = [regex]::Escape($pin)
+              if ($out -notmatch '\[X\] Install failed') { Write-Host "::error::BRAINSTEM_VERSION=$pin was not refused"; exit 1 }
+              if ($out -notmatch "Version $p not found|'$p' is not a release version") { Write-Host "::error::BRAINSTEM_VERSION=$pin gave no clear refusal"; exit 1 }
+              if ($out -match 'Checking prerequisites') { Write-Host "::error::prerequisites ran before $pin was refused"; exit 1 }
+              if (Test-Path $installDir) { Write-Host "::error::BRAINSTEM_VERSION=$pin left $installDir behind"; exit 1 }
+          }
+          Write-Host "bad pins refused on a factory machine; nothing installed or created"
+          exit 0
+
       - name: run the real installer (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -x
+          # Pin legs feed the candidate bytes through the advertised one-liner shapes:
+          # `curl … | BRAINSTEM_VERSION=v0.6.9 bash` and `curl … | bash -s -- --version …`.
+          case "$SCENARIO" in
+            pin-lts-fresh)   set -- bash -c "cat install.sh | BRAINSTEM_VERSION=v$LTS_VERSION bash" ;;
+            pin-lts-upgrade) set -- bash -c "cat install.sh | bash -s -- --version $LTS_TAG" ;;
+            *)               set -- bash install.sh ;;
+          esac
           # `script` allocates a pty — the installer launches the server exactly as
           # it would in a user's terminal. Run it in the background and poll below.
           if [ "$RUNNER_OS" = "macOS" ]; then
-            script -q "$RUNNER_TEMP/install.log" bash install.sh &
+            script -q "$RUNNER_TEMP/install.log" "$@" &
           else
-            script -qec "bash install.sh" "$RUNNER_TEMP/install.log" &
+            script -qec "$(printf '%q ' "$@")" "$RUNNER_TEMP/install.log" &
           fi
           echo $! > "$RUNNER_TEMP/installer.pid"
 
@@ -205,7 +290,15 @@ jobs:
           # server) inherits real writable file handles. Start-Process handle
           # redirection left grandchildren blocked on console/handle semantics in
           # the consoleless CI session and the install hung silently.
-          $boot = "iex (Get-Content -Raw -Encoding UTF8 '$PWD\install.ps1')"
+          $src = "(Get-Content -Raw -Encoding UTF8 '$PWD\install.ps1')"
+          switch ($env:SCENARIO) {
+            # `$env:BRAINSTEM_VERSION = '0.6.9'; irm … | iex` — the one-liner cannot pass arguments.
+            'pin-lts-fresh'   { $boot = "`$env:BRAINSTEM_VERSION = '$env:LTS_VERSION'; iex $src" }
+            # `& ([scriptblock]::Create((irm …))) --version brainstem-v0.6.9`
+            'pin-lts-upgrade' { $boot = "& ([scriptblock]::Create($src)) --version $env:LTS_TAG" }
+            default           { $boot = "iex $src" }
+          }
+          Write-Host "bootstrap: $boot"
           $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($boot))
           Start-Process cmd -ArgumentList '/c',"powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc > `"$env:RUNNER_TEMP\install.log`" 2>&1"
 
@@ -213,18 +306,22 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          BRANCH_VERSION="$(tr -d '[:space:]' < rapp_brainstem/VERSION)"
+          # Pin legs must serve the pinned release; every other leg serves the candidate.
+          case "$SCENARIO" in
+            pin-lts-*) EXPECT_VERSION="$LTS_VERSION" ;;
+            *)         EXPECT_VERSION="$(tr -d '[:space:]' < rapp_brainstem/VERSION)" ;;
+          esac
           for i in $(seq 1 120); do
             sleep 5
             if curl -sf "http://localhost:7071/health" -o "$RUNNER_TEMP/health.json"; then break; fi
             if [ "$i" = 120 ]; then echo "server never came up"; cat "$RUNNER_TEMP/install.log" 2>/dev/null | tail -60; exit 1; fi
           done
           cat "$RUNNER_TEMP/health.json"
-          python3 - "$RUNNER_TEMP/health.json" "$BRANCH_VERSION" <<'EOF'
+          python3 - "$RUNNER_TEMP/health.json" "$EXPECT_VERSION" <<'EOF'
           import json, sys
           d = json.load(open(sys.argv[1]))
           assert d.get("status") in ("ok", "unauthenticated"), d
-          assert d.get("version") == sys.argv[2], f'server v{d.get("version")} != candidate v{sys.argv[2]}'
+          assert d.get("version") == sys.argv[2], f'server v{d.get("version")} != expected v{sys.argv[2]}'
           assert "ContextMemory" in (d.get("agents") or []), d.get("agents")
           print("health OK:", d.get("status"), "v" + d.get("version"))
           EOF
@@ -237,8 +334,47 @@ jobs:
           curl -s -X POST http://localhost:7071/chat -H 'Content-Type: application/json' \
             -d '{"user_input":"preflight ping"}' | python3 -c "import json,sys; d=json.load(sys.stdin); print('chat contract OK:', list(d)[:3])"
 
+      # The LTS pin must land exactly: the installed checkout IS the tag commit (detached,
+      # so no pull can move it) and the kernel files are the tag's bytes, even where git
+      # checks text out as CRLF (Git for Windows' core.autocrlf=true default).
+      - name: assert the pinned LTS kernel (pin-lts only)
+        if: startsWith(matrix.scenario, 'pin-lts')
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$HOME/.brainstem/src"
+          HEAD_COMMIT="$(git -C "$SRC" rev-parse HEAD)"
+          TAG_COMMIT="$(git --git-dir="$BARE" rev-parse --verify "refs/tags/$LTS_TAG^{commit}")"
+          echo "installed HEAD $HEAD_COMMIT; $LTS_TAG = $TAG_COMMIT"
+          test "$TAG_COMMIT" = "$LTS_COMMIT" || { echo "::error::$LTS_TAG is not $LTS_COMMIT"; exit 1; }
+          test "$HEAD_COMMIT" = "$LTS_COMMIT" || { echo "::error::installed checkout is not $LTS_TAG"; exit 1; }
+          if git -C "$SRC" symbolic-ref -q HEAD; then echo "::error::pinned checkout is on a branch"; exit 1; fi
+          git -C "$SRC" config --show-origin --get core.autocrlf || echo "core.autocrlf unset"
+          python3 - "$SRC" "$BARE" <<'EOF'
+          import hashlib, os, subprocess, sys
+          src, bare, tag = sys.argv[1], sys.argv[2], os.environ["LTS_TAG"]
+          # kody-w/RAPP KERNEL_PIN.json, kernel.frozen (grail kody-w/rapp-installer@brainstem-v0.6.9)
+          frozen = {
+              "rapp_brainstem/brainstem.py": "a293dd9f11eef915bf15776f08c736faa60cb749820871b6753ea98233142a71",
+              "rapp_brainstem/agents/basic_agent.py": "701488bc00d536a7b23295e7da99c62f24e9b00f233daa325886430c736b78eb",
+              "rapp_brainstem/VERSION": "13eb74b44be6e3a85a0efa0dedf56aec05e9e50140e1c8bbc0d0fbd8097b0717",
+          }
+          for path, want in frozen.items():
+              blob = subprocess.run(["git", "--git-dir=" + bare, "cat-file", "blob", tag + ":" + path],
+                                    check=True, capture_output=True).stdout
+              disk = open(os.path.join(src, path), "rb").read()
+              print(path, "installed", hashlib.sha256(disk).hexdigest(), "tag blob", hashlib.sha256(blob).hexdigest())
+              assert hashlib.sha256(blob).hexdigest() == want, path + ": tag blob does not match KERNEL_PIN.json"
+              assert disk == blob, path + ": installed bytes differ from " + tag
+          # Evidence of what the kernel sync had to undo on this runner: a non-kernel file
+          # from the same checkout shows whether git wrote CRLF here.
+          other = open(os.path.join(src, "rapp_brainstem", "index.html"), "rb").read()
+          print("non-kernel rapp_brainstem/index.html has CRLF:", b"\r\n" in other)
+          print("kernel byte-exact at", tag)
+          EOF
+
       - name: assert user files survived the upgrade
-        if: matrix.scenario == 'upgrade'
+        if: matrix.scenario == 'upgrade' || matrix.scenario == 'pin-lts-upgrade'
         shell: bash
         run: |
           set -euxo pipefail
@@ -249,6 +385,88 @@ jobs:
           import json,sys; d=json.load(sys.stdin)
           assert 'PreflightCustom' in (d.get('agents') or []), d.get('agents')
           print('custom agent survived upgrade')"
+
+      # The user's own file at a path the LTS tag ships (seeded above) is kept beside the
+      # tag's copy as <path>.bak-<date>; the tag's copy is in place, unmodified.
+      - name: assert a user file at a path the tag ships was kept (pin-lts-upgrade)
+        if: matrix.scenario == 'pin-lts-upgrade'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$HOME/.brainstem/src"
+          F=rapp_brainstem/test_polish.py
+          git -C "$SRC" ls-files --error-unmatch -- "$F" >/dev/null
+          test -z "$(git -C "$SRC" status --porcelain -- "$F")" || { echo "::error::$F is not the tag's copy"; exit 1; }
+          baks=("$SRC/$F".bak-*)
+          { test "${#baks[@]}" = 1 && test -f "${baks[0]}"; } || { echo "::error::expected exactly one $F.bak-*"; exit 1; }
+          ls -l "${baks[0]}"
+          grep -qx "# PREFLIGHT-USER-FILE-MARKER" "${baks[0]}" || { echo "::error::the user's $F was not kept"; exit 1; }
+          echo "user file kept beside the tag's copy"
+
+      # A pin that names no release (a branch, HEAD, a commit, a path) or an empty
+      # --version must be refused with a clear message BEFORE anything changes: same
+      # commit, no new stash of the user's edits, same soul. Run against the pinned
+      # install left by the leg above.
+      - name: bad pins are refused and change nothing (pin-lts-upgrade, unix)
+        if: matrix.scenario == 'pin-lts-upgrade' && runner.os != 'Windows'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$HOME/.brainstem/src"
+          state() { echo "$(git -C "$SRC" rev-parse HEAD) $(git -C "$SRC" stash list | wc -l) $(git -C "$SRC" hash-object rapp_brainstem/soul.md)"; }
+          BEFORE="$(state)"
+          refused() {  # refused <expected message> <installer args...>
+            local want="$1" rc=0 out
+            shift
+            out="$(bash install.sh "$@" </dev/null 2>&1)" || rc=$?
+            echo "$out" | tail -4
+            test "$rc" -ne 0 || { echo "::error::'$*' was not refused"; exit 1; }
+            grep -q "$want" <<<"$out" || { echo "::error::'$*' gave no clear refusal"; exit 1; }
+            if grep -q "Checking prerequisites" <<<"$out"; then echo "::error::prerequisites ran before '$*' was refused"; exit 1; fi
+            test "$(state)" = "$BEFORE" || { echo "::error::'$*' changed the install"; exit 1; }
+          }
+          refused "Version 9.9.9 not found" --version 9.9.9
+          refused "needs a value" --version
+          refused "needs a value" --version " "
+          for bad in main HEAD HEAD~1 "$LTS_COMMIT" "${LTS_COMMIT:0:7}" rapp_brainstem/VERSION; do
+            refused "is not a release version" --version "$bad"
+          done
+          echo "bad pins refused; install unchanged: $BEFORE"
+
+      - name: bad pins are refused and change nothing (pin-lts-upgrade, windows)
+        if: matrix.scenario == 'pin-lts-upgrade' && runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $src = "$env:USERPROFILE\.brainstem\src"
+          function Get-InstallState {
+              "$(git -C $src rev-parse HEAD) $(@(git -C $src stash list).Count) $((Get-FileHash "$src\rapp_brainstem\soul.md").Hash)"
+          }
+          $before = Get-InstallState
+          # The production decode path (the script as a UTF-8 string through a scriptblock,
+          # as `irm` delivers it). Like `irm | iex`, it returns quietly on failure by design,
+          # so the refusal is judged by its message and an unchanged install, not an exit code.
+          function Assert-Refused {
+              param([string]$Want, [string]$PinArgs)
+              $boot = "& ([scriptblock]::Create((Get-Content -Raw -Encoding UTF8 '$PWD\install.ps1'))) $PinArgs"
+              $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($boot))
+              $out = & powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc 2>&1 | Out-String
+              if ($out -notmatch '\[X\] Install failed') { Write-Host $out; Write-Host "::error::'$PinArgs' was not refused"; exit 1 }
+              if ($out -notmatch $Want) { Write-Host $out; Write-Host "::error::'$PinArgs' gave no clear refusal"; exit 1 }
+              if ($out -match 'Checking prerequisites') { Write-Host $out; Write-Host "::error::prerequisites ran before '$PinArgs' was refused"; exit 1 }
+              if ((Get-InstallState) -ne $before) { Write-Host "::error::'$PinArgs' changed the install"; exit 1 }
+              Write-Host "refused as expected: $PinArgs"
+          }
+          Assert-Refused -Want 'Version 9\.9\.9 not found' -PinArgs '--version 9.9.9'
+          Assert-Refused -Want 'needs a value' -PinArgs '--version'
+          Assert-Refused -Want 'needs a value' -PinArgs "--version ' '"
+          foreach ($bad in @('main', 'HEAD', 'HEAD~1', $env:LTS_COMMIT, $env:LTS_COMMIT.Substring(0, 7), 'rapp_brainstem/VERSION')) {
+              Assert-Refused -Want 'is not a release version' -PinArgs "--version '$bad'"
+          }
+          Write-Host "bad pins refused; install unchanged: $before"
+          exit 0
 
       - name: collect installer log
         if: always()

@@ -14,9 +14,10 @@
 
 ```
 branch  →  local checks  →  local preflight  →  push branch  →  CI preflight  →  release
- (never    (pytest, syntax)  (real install      (never main)    (7 fresh VMs:     (tag + merge
+ (never    (pytest, syntax)  (real install      (never main)    (13 VMs:          (tag + merge
   main)                       in a sandbox)                      win/mac/linux
-                                                                 × fresh/upgrade)   to main)
+                                                                 × fresh/upgrade/   to main)
+                                                                   pin-lts)
 ```
 
 Every stage runs the **real, unmodified installers** — the same bytes users run —
@@ -63,7 +64,7 @@ custom agent, an edited `soul.md`, and an edited `.env` all **survive the upgrad
 `--auth` copies your real Copilot token into the sandbox for one true end-to-end
 `/chat` answer. The token never leaves the sandbox; the sandbox is disposable.
 
-## 4. Push the branch → CI preflight (~10 minutes, 7 real machines)
+## 4. Push the branch → CI preflight (~10 minutes, 13 real machines)
 
 ```bash
 git push -u origin fix/whatever
@@ -77,14 +78,16 @@ gh run watch   # or watch the "preflight" workflow in the Actions tab
 | `static` | bash + PowerShell syntax, **PS 5.1 compatibility** (what Windows users actually run), py_compile, full pytest suite |
 | `e2e` win/mac/linux × fresh | The one-liner takes a **factory VM** all the way to a serving brainstem |
 | `e2e` win/mac/linux × upgrade | An **existing production install** upgrades cleanly; user agents/soul/.env survive |
+| `e2e` windows × fresh-nopip | A Python with **no pip module** still installs (the installer bootstraps pip) |
+| `e2e` win/mac/linux × pin-lts-fresh / pin-lts-upgrade | A **pin to the RAPP/1 LTS tag** (`brainstem-v0.6.9`, the kernel RAPP's `KERNEL_PIN.json` freezes) lands exactly: `BRAINSTEM_VERSION` through the one-liner on a factory VM, `--version` on a production install. The checkout is the tag commit, the kernel files match `KERNEL_PIN.json` byte-for-byte, `/health` reports `0.6.9`, user files survive (a user's own file at a path the tag ships is kept beside the tag's copy). Pins that name no release (an unknown version, a branch, `HEAD`, a commit, a path, an empty `--version`) are refused with nothing changed; on the factory VM, before any prerequisite step, with nothing installed or created |
 
 The e2e jobs run `install.ps1` under **Windows PowerShell 5.1** (not pwsh) because
 that is what `irm | iex` uses on a stock Windows machine. GitHub auth endpoints are
 black-holed in the VM's hosts file, which also proves the installer degrades
 gracefully with no network to GitHub auth (it must skip to launch, never hang or die).
 
-**All 7 jobs green = the branch is releasable.** Any red = fix on the branch, push
-again. `main` was never at risk.
+**All jobs green (`static` + 13 `e2e`) = the branch is releasable.** Any red = fix on
+the branch, push again. `main` was never at risk.
 
 ## 5. Optional: manual wild check
 
@@ -164,7 +167,47 @@ Prefer `revert` — history stays honest and no force-push is needed.
 
 ```bash
 curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash -s -- --version vX.Y.Z
+curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | BRAINSTEM_VERSION=vX.Y.Z bash
 ```
+
+```powershell
+# `irm | iex` cannot pass arguments, so Windows pins through the variable…
+$env:BRAINSTEM_VERSION = "vX.Y.Z"; irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1 | iex
+# …or through a scriptblock, which can:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kody-w/rapp-installer/main/install.ps1))) --version vX.Y.Z
+```
+
+A pin names a release tag in any form we ship (`X.Y.Z`, `vX.Y.Z`, `brainstem-vX.Y.Z`),
+looked up only among the repository's tags on GitHub (`git ls-remote --tags`): a
+branch, `HEAD`, a commit or a path is not a version and is refused. Surrounding
+whitespace is ignored, an empty `--version` is refused, and `--version` wins over
+`BRAINSTEM_VERSION` (`install.cmd` and `install.command` pass the variable through).
+A pin that names no release is refused before anything on the machine changes (no
+prerequisite install, backup, stash, wipe or clone), except that a machine without git
+gets git first, because the check needs it; an unknown version is refused with the
+list of available ones. A pinned install checks the tag's commit out detached (never
+pulled forward at launch) and rewrites the kernel files (`brainstem.py`,
+`agents/basic_agent.py`, `VERSION`) byte-for-byte from the tag even where git would
+write CRLF.
+
+It keeps the user's files. On an existing install the switch is never forced: a file
+of the user's at a path the tag ships but the current checkout does not track
+(untracked or ignored) is kept beside the tag's copy as `<path>.bak-<date>` unless it
+is identical to it, and if git still refuses the switch, the installer puts
+everything back, the edits it stashed included, and exits naming the files in the way.
+A re-clone over a broken install (a source folder without `.git`), pinned or not,
+carries over the soul, `.env`, agents, tokens (`.copilot_token`, `.copilot_session`),
+`.brainstem_secret`, `.brainstem_model`, `voice.zip`, `.brainstem_data` and
+`.remote_agents`. To follow `main` again, clear the variable
+(`unset BRAINSTEM_VERSION` / `Remove-Item Env:BRAINSTEM_VERSION`) and re-run the
+plain one-liner. install.sh re-attaches the detached pinned checkout to `main`, only
+ever forward: at the next upgrade, or at launch when no local edit is in the way (git
+never overwrites one; the install then stays on the release until the next upgrade).
+install.ps1 always updates from `origin main` by name, which moves a detached checkout
+too.
+
+The RAPP/1 LTS kernel is `brainstem-v0.6.9`: the tag kody-w/RAPP's `KERNEL_PIN.json`
+freezes by SHA-256. The preflight `pin-lts` legs prove that pin on every platform.
 
 Tags make every past release reinstallable forever. That is the safety net that
 makes shipping polish low-fear: the worst bad push costs one `git revert` plus a
