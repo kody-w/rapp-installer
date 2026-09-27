@@ -1,8 +1,37 @@
 # 🧠 RAPP Brainstem
 
-> **👉 [Get Started at kody-w.github.io/rapp-installer](https://kody-w.github.io/rapp-installer/)**
+<!-- rapp1:network-header:start -->
+[![RAPP/1](https://kody-w.github.io/rapp-hive-public/portfolio/badges/rapp-installer.svg)](https://github.com/kody-w/rapp-hive-public/blob/main/portfolio/repos/rapp-installer.md) · **New to RAPP?** [Start here: get your Brainstem →](https://github.com/kody-w/rapp-installer#start-here)
+<!-- rapp1:network-header:end -->
+
+## Start here
 
 A local-first AI agent server powered by GitHub Copilot. No API keys. No cloud setup. Just your GitHub account.
+
+**RAPP/1 LTS: Brainstem v0.6.9.** This is the kernel RAPP/1 is pinned to (`KERNEL_PIN.json` in [kody-w/RAPP](https://github.com/kody-w/RAPP), channel `lts`), installed from the `brainstem-v0.6.9` tag.
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kody-w/rapp-installer/brainstem-v0.6.9/install.sh | bash -s -- --version brainstem-v0.6.9
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/kody-w/rapp-installer/brainstem-v0.6.9/install.ps1 | iex
+```
+
+> [!NOTE]
+> The Windows installer can't pin a version: even at this tag it clones `main`, so it installs the current kernel, not v0.6.9.
+
+Both install into `~/.brainstem` and add the `brainstem` command. Then run `gh auth login` once; `brainstem` starts the server at `localhost:7071`.
+
+### Newest channel
+
+The newest Brainstem, which moves with `main`:
+
+> **👉 [Get Started at kody-w.github.io/rapp-installer](https://kody-w.github.io/rapp-installer/)**
 
 ```
 curl -fsSL https://kody-w.github.io/rapp-installer/install.sh | bash
