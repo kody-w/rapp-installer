@@ -31,6 +31,7 @@ import tempfile
 import ipaddress
 import hashlib
 import platform
+from copy import deepcopy
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
@@ -749,6 +750,26 @@ def _auto_select_default_model():
         print(f"[brainstem] Auto-select skipped: {e}")
     _default_model_selected = True
 
+def _model_api(model):
+    """Choose a supported transport without hiding Responses-only chat models."""
+    endpoints = model.get("supported_endpoints")
+    model_id = str(model.get("id", ""))
+    astra = model_id == "gpt-6-astra" or model_id.startswith("gpt-6-astra-")
+    if endpoints is None:
+        return "/responses" if astra else "/chat/completions"
+    if not isinstance(endpoints, list):
+        return None
+    # Astra cannot call functions through Chat Completions, even when that route
+    # is advertised for text-only use.
+    if "/responses" in endpoints and (astra or "/chat/completions" not in endpoints):
+        return "/responses"
+    if astra:
+        return None
+    if "/chat/completions" in endpoints:
+        return "/chat/completions"
+    return None
+
+
 def _fetch_copilot_models():
     """Fetch available models from Copilot API. Updates AVAILABLE_MODELS in place."""
     global AVAILABLE_MODELS, _models_fetched, _NO_TOOL_CHOICE_MODELS
@@ -787,21 +808,16 @@ def _fetch_copilot_models():
                     if caps.get("type", "chat") != "chat":
                         skipped.append(mid)
                         continue
-                    # Only keep models the Copilot API will actually serve over
-                    # /chat/completions. Some listed models (e.g. gpt-5.5,
-                    # *-codex, mai-code-*) are Responses-API-only and reject
-                    # chat/completions with "unsupported_api_for_model". Fail
-                    # OPEN when the field is absent (older API responses omit it)
-                    # so a schema change doesn't wipe the list; a present list
-                    # that lacks /chat/completions (including an empty list)
-                    # means the model has no chat route -> skip it.
-                    endpoints = m.get("supported_endpoints")
-                    if endpoints is not None and "/chat/completions" not in endpoints:
+                    api = _model_api(m)
+                    if api is None:
                         skipped.append(mid)
                         continue
                     # Capture availability (policy / model_picker_enabled /
                     # capabilities) from the RAW object before reducing it.
-                    new_models.append({"id": mid, "name": mname, "available": _model_is_available(m)})
+                    new_models.append({
+                        "id": mid, "name": mname, "available": _model_is_available(m),
+                        "api": api,
+                    })
                     if "o1" in mid.lower():
                         _NO_TOOL_CHOICE_MODELS.add(mid)
                 if new_models:
@@ -1870,26 +1886,309 @@ _STREAM_INTERRUPTED_USER_MSG = (
 )
 
 
+class _ResponsesMessage(dict):
+    """Keep opaque reasoning local to this tool loop, outside the Chat wire format."""
+
+    def __init__(self, message, model, output):
+        super().__init__(message)
+        self.responses_model = model
+        self.responses_output = deepcopy(output)
+
+
+def _responses_input(messages, model):
+    items = []
+    pending = set()
+    seen = set()
+    for message in messages:
+        role = message.get("role")
+        if role == "tool":
+            call_id = message.get("tool_call_id")
+            if not isinstance(call_id, str) or call_id not in pending:
+                raise RuntimeError("Responses received an orphaned or duplicate tool result.")
+            content = message.get("content")
+            if not isinstance(content, str):
+                raise RuntimeError("Responses tool results must be strings.")
+            pending.remove(call_id)
+            items.append({"type": "function_call_output", "call_id": call_id, "output": content})
+            continue
+        if pending:
+            raise RuntimeError("Responses requires a result for every function call.")
+        if role not in ("system", "developer", "user", "assistant"):
+            raise RuntimeError("Responses received an unsupported message role.")
+        content = message.get("content")
+        calls = message.get("tool_calls")
+        if calls is None:
+            calls = []
+        if content is None and role == "assistant" and calls:
+            content = ""
+        if not isinstance(content, str) or not isinstance(calls, list):
+            raise RuntimeError("Responses requires text messages and a function-call array.")
+        group = [{"role": role, "content": content}] if content or not calls else []
+        for call in calls:
+            if role != "assistant" or not isinstance(call, dict) or call.get("type") != "function":
+                raise RuntimeError("Responses supports only assistant function calls.")
+            call_id = call.get("id")
+            function = call.get("function")
+            if not isinstance(call_id, str) or not call_id or call_id in seen:
+                raise RuntimeError("Responses function call IDs must be nonempty and unique.")
+            if not isinstance(function, dict):
+                raise RuntimeError("Responses received a malformed function call.")
+            seen.add(call_id)
+            pending.add(call_id)
+            group.append({
+                "type": "function_call", "call_id": call_id,
+                "name": function.get("name"), "arguments": function.get("arguments"),
+            })
+        # Only internally produced messages carry receipts. A client cannot
+        # inject opaque reasoning by adding fields to conversation_history.
+        if isinstance(message, _ResponsesMessage) and message.responses_model == model:
+            group = deepcopy(message.responses_output)
+        items.extend(group)
+    if pending:
+        raise RuntimeError("Responses requires a result for every function call.")
+    return items
+
+
+def _copilot_request(model, messages, tools=None, stream=False):
+    metadata = next((m for m in AVAILABLE_MODELS if m["id"] == model), {"id": model})
+    api = metadata.get("api") or _model_api(metadata)
+    if api is None:
+        raise RuntimeError(f"Model '{model}' has no supported chat transport.")
+    if api == "/responses":
+        # Copilot's Responses route streams even for the blocking /chat API.
+        body = {
+            "model": model, "input": _responses_input(messages, model),
+            "stream": True, "store": False, "include": ["reasoning.encrypted_content"],
+        }
+        if tools:
+            body["tools"] = []
+            for tool in tools:
+                if tool.get("type") != "function" or not isinstance(tool.get("function"), dict):
+                    raise RuntimeError("Responses supports only function tools.")
+                function = deepcopy(tool["function"])
+                # Responses otherwise makes optional agent arguments required.
+                function.setdefault("strict", False)
+                body["tools"].append({**function, "type": "function"})
+            body["tool_choice"] = "auto"
+    else:
+        body = {"model": model, "messages": messages}
+        if stream:
+            body["stream"] = True
+        if tools:
+            body["tools"] = tools
+            if model not in _NO_TOOL_CHOICE_MODELS:
+                body["tool_choice"] = "auto"
+    return api, body
+
+
+def _responses_usage(usage):
+    if not isinstance(usage, dict):
+        raise RuntimeError("Responses returned malformed token usage.")
+    result = {}
+    for source, target in (
+        ("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens"),
+    ):
+        count = usage.get(source)
+        if type(count) is not int or count < 0:
+            raise RuntimeError("Responses returned invalid token counts.")
+        result[target] = count
+    total = result["prompt_tokens"] + result["completion_tokens"]
+    if type(usage.get("total_tokens", total)) is not int or usage.get("total_tokens", total) != total:
+        raise RuntimeError("Responses returned inconsistent token usage.")
+    result["total_tokens"] = total
+    for source, target in (
+        ("input_tokens_details", "prompt_tokens_details"),
+        ("output_tokens_details", "completion_tokens_details"),
+    ):
+        if usage.get(source) is not None:
+            if not isinstance(usage[source], dict):
+                raise RuntimeError("Responses returned malformed token details.")
+            result[target] = deepcopy(usage[source])
+    return result
+
+
+def _responses_model_matches(actual, requested):
+    if not isinstance(actual, str):
+        return False
+    if actual == requested:
+        return True
+    if actual.startswith(requested + "-"):
+        return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-[a-z0-9]+)*", actual[len(requested) + 1:]))
+    # Copilot echoes the canonical Sol ID for the fast serving variant.
+    return requested.endswith("-fast") and actual == requested[:-5]
+
+
+def _responses_json(value):
+    def unique_object(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("Duplicate JSON key")
+            result[key] = item
+        return result
+
+    def invalid_constant(value):
+        raise ValueError("Non-finite JSON number")
+
+    try:
+        return json.loads(value, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+    except (ValueError, RecursionError):
+        raise RuntimeError("Responses returned malformed JSON.") from None
+
+
+def _normalize_responses(payload, model, tools=None, messages=None):
+    if not isinstance(payload, dict):
+        raise RuntimeError("Responses returned a malformed response.")
+    if not _responses_model_matches(payload.get("model"), model):
+        raise RuntimeError("Responses returned a different model from the selected model.")
+    if (payload.get("status") != "completed" or payload.get("error") is not None
+            or payload.get("incomplete_details") is not None):
+        details = payload.get("incomplete_details") or {}
+        reason = details.get("reason", payload.get("status", "unknown")) if isinstance(details, dict) else "unknown"
+        raise RuntimeError(f"Model '{model}' did not complete its response ({_scrub_secrets(str(reason))[:120]}).")
+    output = payload.get("output")
+    if not isinstance(output, list) or not output:
+        raise RuntimeError(f"Model '{model}' returned no output.")
+    text, calls = [], []
+    call_ids = {
+        call["id"] for message in messages or [] for call in (message.get("tool_calls") or [])
+    }
+    tool_names = {tool["function"]["name"] for tool in tools or []}
+    for item in output:
+        if not isinstance(item, dict) or item.get("status", "completed") != "completed":
+            raise RuntimeError("Responses returned an unfinished or malformed output item.")
+        kind = item.get("type")
+        if kind == "message":
+            if item.get("role") != "assistant" or not isinstance(item.get("content"), list):
+                raise RuntimeError("Responses returned a malformed assistant message.")
+            for part in item["content"]:
+                if not isinstance(part, dict):
+                    raise RuntimeError("Responses returned malformed message content.")
+                field = {"output_text": "text", "refusal": "refusal"}.get(part.get("type"))
+                if field is None or not isinstance(part.get(field), str):
+                    raise RuntimeError("Responses returned unsupported message content.")
+                text.append(part[field])
+        elif kind == "function_call":
+            call_id, name, arguments = item.get("call_id"), item.get("name"), item.get("arguments")
+            if (not isinstance(call_id, str) or not call_id or call_id in call_ids
+                    or any(char.isspace() or ord(char) < 32 for char in call_id)):
+                raise RuntimeError("Responses returned a missing or duplicate function call ID.")
+            if not isinstance(name, str) or name not in tool_names or not isinstance(arguments, str):
+                raise RuntimeError("Responses returned an undeclared or malformed function call.")
+            args = _responses_json(arguments)
+            if not isinstance(args, dict):
+                raise RuntimeError("Responses function arguments must encode an object.")
+            call_ids.add(call_id)
+            calls.append({
+                "id": call_id, "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            })
+        elif kind != "reasoning":
+            raise RuntimeError("Responses returned an unsupported output item.")
+    content = "".join(text)
+    if not content and not calls:
+        raise RuntimeError(f"Model '{model}' returned no visible text or function calls.")
+    message = {"role": "assistant", "content": content or None}
+    if calls:
+        message["tool_calls"] = calls
+    result = {
+        "id": payload.get("id"), "object": "chat.completion",
+        "model": payload.get("model", model), "created": payload.get("created_at"),
+        "choices": [{
+            "index": 0, "message": _ResponsesMessage(message, model, output),
+            "finish_reason": "tool_calls" if calls else "stop",
+        }],
+    }
+    if payload.get("usage") is not None:
+        result["usage"] = _responses_usage(payload["usage"])
+    return result
+
+
+def _responses_events(resp):
+    data, event_name = [], ""
+    for raw in resp.iter_lines(decode_unicode=True):
+        if raw is None:
+            continue
+        line = raw if isinstance(raw, str) else raw.decode("utf-8")
+        line = line.removesuffix("\r")
+        if not line:
+            if data:
+                payload = "\n".join(data)
+                if payload == "[DONE]":
+                    return
+                event = _responses_json(payload)
+                if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+                    raise RuntimeError("Responses returned a malformed streaming event.")
+                if event_name not in ("", "message", event["type"]):
+                    raise RuntimeError("Responses streaming event type does not match its payload.")
+                yield event
+            data, event_name = [], ""
+        elif not line.startswith(":"):
+            field, _, value = line.partition(":")
+            if field == "data":
+                data.append(value.removeprefix(" "))
+            elif field == "event":
+                event_name = value.removeprefix(" ")
+    if data:
+        raise requests.exceptions.ConnectionError("Responses stream ended inside an event.")
+
+
+def _accumulate_responses_stream(resp, model, tools=None, messages=None):
+    """Execute no tools until response.completed provides authoritative output."""
+    text = []
+    completion = None
+    if "application/json" in resp.headers.get("Content-Type", ""):
+        completion = _normalize_responses(resp.json(), model, tools, messages)
+    else:
+        for event in _responses_events(resp):
+            kind = event["type"]
+            if kind in ("response.output_text.delta", "response.refusal.delta"):
+                piece = event.get("delta")
+                if not isinstance(piece, str):
+                    raise RuntimeError("Responses returned a malformed text delta.")
+                if piece:
+                    text.append(piece)
+                    yield ("delta", piece)
+            elif kind == "response.completed":
+                completion = _normalize_responses(event.get("response"), model, tools, messages)
+                break
+            elif kind in ("error", "response.error", "response.failed", "response.incomplete", "response.cancelled"):
+                if isinstance(event.get("response"), dict):
+                    _normalize_responses(event["response"], model, tools, messages)
+                raise RuntimeError(f"Model '{model}' failed to complete its response.")
+            elif not (kind in (
+                "response.created", "response.in_progress", "response.queued",
+                "response.output_item.added", "response.output_item.done",
+                "response.content_part.added", "response.content_part.done",
+                "response.output_text.done", "response.refusal.done",
+                "response.output_text.annotation.added",
+                "response.function_call_arguments.delta", "response.function_call_arguments.done",
+            ) or kind.startswith(("response.reasoning_", "response.reasoning."))):
+                raise RuntimeError("Responses returned an unsupported streaming event.")
+    if completion is None:
+        raise requests.exceptions.ConnectionError("Responses stream ended without response.completed.")
+    choice = completion["choices"][0]
+    content = choice["message"].get("content") or ""
+    streamed = "".join(text)
+    if not content.startswith(streamed):
+        raise RuntimeError("Responses final text disagrees with its streamed text.")
+    if content[len(streamed):]:
+        yield ("delta", content[len(streamed):])
+    return completion
+
+
 def call_copilot(messages, tools=None):
-    """Call the Copilot chat completions API."""
+    """Call the selected Copilot transport and return a Chat-shaped completion."""
+    requested_model = MODEL
     copilot_token, endpoint = get_copilot_token()
-    
-    url = f"{endpoint}/chat/completions"
+    api, body = _copilot_request(requested_model, messages, tools)
+    url = f"{endpoint}{api}"
     headers = {
         "Authorization": f"Bearer {copilot_token}",
         "Content-Type": "application/json",
         "Editor-Version": "vscode/1.95.0",
         "Copilot-Integration-Id": "vscode-chat",
     }
-    body = {
-        "model": MODEL,
-        "messages": messages,
-    }
-    if tools:
-        body["tools"] = tools
-        if MODEL not in _NO_TOOL_CHOICE_MODELS:
-            body["tool_choice"] = "auto"
-
     print(f"[brainstem] API call: model={MODEL}, tools={len(tools) if tools else 0}, tool_choice={body.get('tool_choice', 'NONE')}")
 
     # (connect, read) timeouts: fail fast if we can't even reach the endpoint, but
@@ -1897,12 +2196,12 @@ def call_copilot(messages, tools=None):
     # transient hiccup or a cold model, so retry ONCE (mirroring the 401 path) before
     # giving up — and never let the raw urllib3 timeout text escape to the user.
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+        resp = requests.post(url, headers=headers, json=body, stream=api == "/responses", timeout=(10, 120))
     except requests.exceptions.Timeout:
         _tlog("api.timeout_retry", {"model": MODEL}, level="warn")
         print("[brainstem] Copilot request timed out — retrying once")
         try:
-            resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+            resp = requests.post(url, headers=headers, json=body, stream=api == "/responses", timeout=(10, 120))
         except requests.exceptions.Timeout as e:
             _tlog("api.timeout", {"model": MODEL, "detail": str(e)[:300]}, level="error")
             print(f"[brainstem] Copilot request timed out again, giving up: {e}")
@@ -1916,12 +2215,14 @@ def call_copilot(messages, tools=None):
     if resp.status_code == 401:
         _tlog("api.token_rejected_401", {"model": MODEL}, level="warn")
         print("[brainstem] Copilot token rejected (401) — refreshing once and retrying")
+        if api == "/responses":
+            resp.close()
         _invalidate_copilot_token()
         try:
             copilot_token, endpoint = get_copilot_token()
-            url = f"{endpoint}/chat/completions"
+            url = f"{endpoint}{api}"
             headers["Authorization"] = f"Bearer {copilot_token}"
-            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            resp = requests.post(url, headers=headers, json=body, stream=api == "/responses", timeout=(10, 120))
         except Exception as e:
             print(f"[brainstem] Token refresh after 401 failed: {e}")
 
@@ -1931,9 +2232,9 @@ def call_copilot(messages, tools=None):
         print(f"[brainstem] API error {resp.status_code} with model '{MODEL}': {error_detail}")
         # On 400/429/5xx, cycle through other available models before giving up
         if resp.status_code in (400, 429, 500, 502, 503):
-            tried = {MODEL}
+            tried = {requested_model}
             fallback_ids = [m["id"] for m in AVAILABLE_MODELS
-                            if m["id"] != MODEL and m.get("available", True)]
+                            if m["id"] != requested_model and m.get("available", True)]
             # Try the universal gpt-4o safety net first.
             if _SAFETY_NET_MODEL in fallback_ids:
                 fallback_ids.remove(_SAFETY_NET_MODEL)
@@ -1943,21 +2244,35 @@ def call_copilot(messages, tools=None):
                     continue
                 tried.add(fallback_model)
                 print(f"[brainstem] Retrying with {fallback_model}...")
-                body["model"] = fallback_model
-                if fallback_model in _NO_TOOL_CHOICE_MODELS:
-                    body.pop("tool_choice", None)
-                elif tools and "tool_choice" not in body:
-                    body["tool_choice"] = "auto"
-                resp = requests.post(url, headers=headers, json=body, timeout=60)
+                if api == "/responses":
+                    resp.close()
+                api, body = _copilot_request(fallback_model, messages, tools)
+                url = f"{endpoint}{api}"
+                resp = requests.post(url, headers=headers, json=body, stream=api == "/responses", timeout=(10, 120))
                 if resp.status_code == 200:
                     break
                 print(f"[brainstem] {fallback_model} also failed ({resp.status_code})")
+    if api == "/responses" and resp.status_code != 200:
+        resp.close()
     resp.raise_for_status()
     # Copilot's chat endpoint may return JSON without a charset; requests then defaults
     # text/* responses to ISO-8859-1, decoding UTF-8 emoji/em-dashes as Latin-1 mojibake
     # (e.g. 🧠 -> "ðŸ§ ", — -> "â€""). Force UTF-8 so resp.json() decodes correctly.
     resp.encoding = "utf-8"
-    result = resp.json()
+    if api == "/responses":
+        accumulator = _accumulate_responses_stream(resp, body["model"], tools, messages)
+        try:
+            while True:
+                try:
+                    next(accumulator)
+                except StopIteration as completed:
+                    result = completed.value
+                    break
+        finally:
+            accumulator.close()
+            resp.close()
+    else:
+        result = resp.json()
 
     # A 200 with an empty/absent "choices" list (content-filtered prompts, some
     # error-shaped 200s) would otherwise crash below on choices[0]. Fail with a
@@ -2107,6 +2422,7 @@ def call_copilot_stream(messages, tools=None, model=None):
     merged message, the model that produced it, and finish_reason.
 
     Read timeout is (10, 30): 10s to connect, then a 30s ceiling BETWEEN chunks.
+    Responses models get 120s between chunks to allow for reasoning.
     A live generation keeps emitting bytes so the read never times out; 30s of
     total silence means the generation is dead and requests raises ReadTimeout,
     which the caller surfaces as a clean error. That is the whole point — "no bytes
@@ -2117,22 +2433,19 @@ def call_copilot_stream(messages, tools=None, model=None):
     """
     use_model = model or MODEL
     copilot_token, endpoint = get_copilot_token()
-    url = f"{endpoint}/chat/completions"
+    api, body = _copilot_request(use_model, messages, tools, stream=True)
+    url = f"{endpoint}{api}"
     headers = {
         "Authorization": f"Bearer {copilot_token}",
         "Content-Type": "application/json",
         "Editor-Version": "vscode/1.95.0",
         "Copilot-Integration-Id": "vscode-chat",
     }
-    body = {"model": use_model, "messages": messages, "stream": True}
-    if tools:
-        body["tools"] = tools
-        if use_model not in _NO_TOOL_CHOICE_MODELS:
-            body["tool_choice"] = "auto"
+    timeout = (10, 120) if api == "/responses" else (10, 30)
 
     print(f"[brainstem] STREAM call: model={use_model}, tools={len(tools) if tools else 0}")
 
-    resp = requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 30))
+    resp = requests.post(url, headers=headers, json=body, stream=True, timeout=timeout)
 
     # Self-heal a server-side-rejected cached token exactly once, like call_copilot.
     if resp.status_code == 401:
@@ -2140,9 +2453,9 @@ def call_copilot_stream(messages, tools=None, model=None):
         resp.close()
         _invalidate_copilot_token()
         copilot_token, endpoint = get_copilot_token()
-        url = f"{endpoint}/chat/completions"
+        url = f"{endpoint}{api}"
         headers["Authorization"] = f"Bearer {copilot_token}"
-        resp = requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 30))
+        resp = requests.post(url, headers=headers, json=body, stream=True, timeout=timeout)
 
     if resp.status_code != 200:
         detail = ""
@@ -2158,12 +2471,20 @@ def call_copilot_stream(messages, tools=None, model=None):
     # Same mojibake guard call_copilot documents: force UTF-8 for decode_unicode.
     resp.encoding = "utf-8"
     try:
-        final = yield from _accumulate_stream(resp)
-        yield ("done", {
+        if api == "/responses":
+            completion = yield from _accumulate_responses_stream(resp, use_model, tools, messages)
+            final = completion["choices"][0]
+        else:
+            completion = {}
+            final = yield from _accumulate_stream(resp)
+        done = {
             "message": final["message"],
             "model": use_model,
             "finish_reason": final["finish_reason"],
-        })
+        }
+        if "usage" in completion:
+            done["usage"] = completion["usage"]
+        yield ("done", done)
     finally:
         # Runs on normal completion AND on GeneratorExit (client disconnect) —
         # closing the response releases the socket so a dropped SSE client can

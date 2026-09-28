@@ -108,7 +108,10 @@ Returns `"status": "unauthenticated"` (still 200) if the Copilot token is missin
 
 ### `GET /models`
 
-Lists available models and the current selection.
+Lists available models and the current selection. The catalog is fetched from
+your signed-in Copilot account, including models served through the Responses
+API, such as GPT-6 Astra. Each fetched entry includes `available` (account
+eligibility) and `api` (`/chat/completions` or `/responses`).
 
 ```json
 {
@@ -129,6 +132,18 @@ Switch the active model at runtime.
 ```json
 { "model": "gpt-4o-mini" }
 ```
+
+To use GPT-6 Astra, select it in the web UI or send `{"model":"gpt-6-astra"}`
+to this endpoint when it appears in your account's catalog. The selection
+persists across restarts; `GITHUB_MODEL=gpt-6-astra` also pins it when no UI
+selection is saved. Automatic model selection is unchanged.
+
+Both `/chat` and `/chat/stream` support Responses models, including agent calls.
+The server translates their request and response shapes internally; existing
+clients and `BasicAgent` implementations do not need changes. Responses requests
+use `store:false`, and opaque reasoning is replayed only within the current
+request's tool loop, never returned to the browser or stored as conversation
+history. An incomplete response does not execute partial tool calls.
 
 ### `POST /login`
 

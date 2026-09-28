@@ -771,7 +771,7 @@ class TestExperimentalResearchAgent(unittest.TestCase):
 
 
 class TestFetchCopilotModels(unittest.TestCase):
-    """_fetch_copilot_models() must keep only chat models with a /chat/completions route."""
+    """Only chat models with a supported HTTP transport belong in the picker."""
 
     # A model with a /chat/completions route, a Responses-API-only chat model,
     # an embeddings model, a legacy chat model with no endpoints field, a chat
@@ -813,18 +813,22 @@ class TestFetchCopilotModels(unittest.TestCase):
             with patch("requests.get", return_value=mock_resp):
                 self.brainstem._fetch_copilot_models()
 
-    def test_filters_to_chat_completions_models(self):
+    def test_filters_to_supported_chat_transports(self):
         self._run_fetch({"data": self.SAMPLE})
         ids = [m["id"] for m in self.brainstem.AVAILABLE_MODELS]
-        # Kept: chat route present, OR endpoints field absent (fail open).
+        # Kept: either supported HTTP route, or legacy metadata without endpoints.
         self.assertIn("chat-ok", ids)
+        self.assertIn("responses-only", ids)
         self.assertIn("chat-legacy", ids)
         self.assertIn("o1-preview", ids)
-        # Skipped: Responses-only, embeddings, and empty endpoints list.
-        self.assertNotIn("responses-only", ids)
+        # Skipped: embeddings and empty endpoints lists.
         self.assertNotIn("embed-1", ids)
         self.assertNotIn("chat-empty-endpoints", ids)
-        self.assertEqual(len(ids), 3)
+        self.assertEqual(len(ids), 4)
+        routes = {m["id"]: m["api"] for m in self.brainstem.AVAILABLE_MODELS}
+        self.assertEqual(routes["responses-only"], "/responses")
+        self.assertEqual(routes["chat-ok"], "/chat/completions")
+        self.assertEqual(routes["chat-legacy"], "/chat/completions")
 
     def test_o1_model_marked_no_tool_choice(self):
         self._run_fetch({"data": self.SAMPLE})
