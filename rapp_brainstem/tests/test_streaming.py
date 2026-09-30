@@ -184,7 +184,7 @@ class TestUnsupportedModelFallback(unittest.TestCase):
     def test_non_200_raises_streaming_unsupported_before_any_delta(self):
         resp = FakeStreamResp([], status=400, text='{"error":"model does not support streaming"}')
         with mock.patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://ep/v1")), \
-             mock.patch.object(brainstem.requests, "post", return_value=resp) as post:
+             mock.patch.object(brainstem, "_copilot_request", return_value=resp) as post:
             gen = brainstem.call_copilot_stream([{"role": "user", "content": "hi"}], model="o1-preview")
             with self.assertRaises(brainstem.StreamingUnsupported) as ctx:
                 next(gen)  # POST + status check happen on first iteration
@@ -200,7 +200,7 @@ class TestUnsupportedModelFallback(unittest.TestCase):
         brainstem._NO_TOOL_CHOICE_MODELS.add("o1-mini")
         try:
             with mock.patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://ep/v1")), \
-                 mock.patch.object(brainstem.requests, "post", return_value=resp) as post:
+                 mock.patch.object(brainstem, "_copilot_request", return_value=resp) as post:
                 gen = brainstem.call_copilot_stream(
                     [{"role": "user", "content": "hi"}],
                     tools=[{"type": "function", "function": {"name": "X"}}],
@@ -224,7 +224,7 @@ class TestDisconnectCleanup(unittest.TestCase):
             lines.append("")
         resp = FakeStreamResp(lines, status=200)
         with mock.patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://ep/v1")), \
-             mock.patch.object(brainstem.requests, "post", return_value=resp):
+             mock.patch.object(brainstem, "_copilot_request", return_value=resp):
             gen = brainstem.call_copilot_stream([{"role": "user", "content": "hi"}], model="gpt-4o")
             first = next(gen)
             self.assertEqual(first, ("delta", "tok0"))
@@ -239,7 +239,7 @@ class TestDisconnectCleanup(unittest.TestCase):
         ]
         resp = FakeStreamResp(lines, status=200)
         with mock.patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://ep/v1")), \
-             mock.patch.object(brainstem.requests, "post", return_value=resp):
+             mock.patch.object(brainstem, "_copilot_request", return_value=resp):
             events = list(brainstem.call_copilot_stream([{"role": "user", "content": "hi"}], model="gpt-4o"))
         kinds = [e[0] for e in events]
         self.assertIn("done", kinds)

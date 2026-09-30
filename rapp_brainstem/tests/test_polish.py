@@ -550,7 +550,7 @@ def test_call_copilot_empty_choices_raises_runtimeerror(monkeypatch):
         def json(self):
             return {"choices": []}
 
-    monkeypatch.setattr(bs.requests, "post", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(bs, "_copilot_request", lambda *a, **k: FakeResp())
     with pytest.raises(RuntimeError):
         bs.call_copilot([{"role": "user", "content": "hi"}])
 

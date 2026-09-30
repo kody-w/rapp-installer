@@ -31,10 +31,12 @@ import tempfile
 import ipaddress
 import hashlib
 import platform
+import http.cookiejar
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
 import requests
+import urllib3
 from flask import Flask, request, jsonify, redirect, send_from_directory, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -756,7 +758,8 @@ def _fetch_copilot_models():
         return
     try:
         copilot_token, endpoint = get_copilot_token()
-        resp = requests.get(
+        resp = _copilot_request(
+            "GET",
             f"{endpoint}/models",
             headers={
                 "Authorization": f"Bearer {copilot_token}",
@@ -1856,6 +1859,51 @@ def load_agents():
     print(f"[brainstem] {len(agents)} agent(s) ready.")
     return agents
 
+# ── Copilot HTTP keep-alive ───────────────────────────────────────────────────
+#
+# Copilot API calls (chat, streaming, /models) share one requests.Session, so
+# back-to-back calls (tool rounds, the next turn) reuse a warm connection instead of
+# paying a new TCP + TLS handshake and CA-bundle load each time. Each call still sends
+# exactly what requests.post/get would: the session keeps no cookies, and proxy/CA
+# settings are read from the environment per call. The token exchange and login calls
+# go to github.com minutes apart, so they stay one-shot.
+#
+# A pooled socket can die unnoticed (sleep, a network change; Copilot itself closes
+# idle connections after 120 s), so a pool idle for _COPILOT_IDLE_S is replaced, not
+# trusted. Idle time is wall clock: time.monotonic() stops during sleep on macOS.
+_COPILOT_IDLE_S = 20
+_copilot_http = None
+_copilot_http_used = 0.0
+_copilot_http_lock = threading.Lock()
+
+
+def _copilot_request(method, url, **kwargs):
+    """requests.request(method, url, **kwargs) on the shared Copilot session."""
+    global _copilot_http, _copilot_http_used
+    with _copilot_http_lock:
+        now = time.time()
+        warm = _copilot_http is not None and 0 <= now - _copilot_http_used < _COPILOT_IDLE_S
+        if not warm:
+            _copilot_http = requests.Session()
+            _copilot_http.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+        _copilot_http_used = now
+        session = _copilot_http
+    try:
+        return session.request(method, url, **kwargs)
+    except requests.exceptions.ConnectionError as e:
+        # "Connection aborted" before any response on a warm pool: the reused socket
+        # was already dropped by the server or network, which a fresh connection would
+        # not have hit. Drop the pool and make the call once more, one-shot. Timeouts,
+        # connect/TLS/proxy errors and failures after the response began are not retried.
+        if not (warm and e.args and isinstance(e.args[0], urllib3.exceptions.ProtocolError)):
+            raise
+        with _copilot_http_lock:
+            if _copilot_http is session:
+                _copilot_http = None
+        _tlog("api.stale_connection_retry", {"error": str(e)[:200]}, level="warn")
+        print("[brainstem] Reused Copilot connection was already closed — retrying on a new one")
+        return requests.request(method, url, **kwargs)
+
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
 # Surfaced verbatim to the user whenever a generation times out even after one
@@ -1897,12 +1945,12 @@ def call_copilot(messages, tools=None):
     # transient hiccup or a cold model, so retry ONCE (mirroring the 401 path) before
     # giving up — and never let the raw urllib3 timeout text escape to the user.
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+        resp = _copilot_request("POST", url, headers=headers, json=body, timeout=(10, 120))
     except requests.exceptions.Timeout:
         _tlog("api.timeout_retry", {"model": MODEL}, level="warn")
         print("[brainstem] Copilot request timed out — retrying once")
         try:
-            resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+            resp = _copilot_request("POST", url, headers=headers, json=body, timeout=(10, 120))
         except requests.exceptions.Timeout as e:
             _tlog("api.timeout", {"model": MODEL, "detail": str(e)[:300]}, level="error")
             print(f"[brainstem] Copilot request timed out again, giving up: {e}")
@@ -1921,7 +1969,7 @@ def call_copilot(messages, tools=None):
             copilot_token, endpoint = get_copilot_token()
             url = f"{endpoint}/chat/completions"
             headers["Authorization"] = f"Bearer {copilot_token}"
-            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            resp = _copilot_request("POST", url, headers=headers, json=body, timeout=60)
         except Exception as e:
             print(f"[brainstem] Token refresh after 401 failed: {e}")
 
@@ -1948,7 +1996,7 @@ def call_copilot(messages, tools=None):
                     body.pop("tool_choice", None)
                 elif tools and "tool_choice" not in body:
                     body["tool_choice"] = "auto"
-                resp = requests.post(url, headers=headers, json=body, timeout=60)
+                resp = _copilot_request("POST", url, headers=headers, json=body, timeout=60)
                 if resp.status_code == 200:
                     break
                 print(f"[brainstem] {fallback_model} also failed ({resp.status_code})")
@@ -2019,7 +2067,7 @@ class StreamingUnsupported(Exception):
         super().__init__(f"Model '{model}' rejected streaming ({status}): {str(detail)[:200]}")
 
 
-def _accumulate_stream(resp):
+def _accumulate_stream(resp, lines=None):
     """Parse a Copilot SSE (`stream:true`) response.
 
     Yields ('delta', text) for each content fragment the instant it arrives, and
@@ -2032,13 +2080,15 @@ def _accumulate_stream(resp):
         single call whose id/name/arguments are split across many chunks rebuilds
         into one call. Claude-style multi-choice deltas (text on one choice,
         tool_calls on another) therefore merge correctly too.
+
+    Pass `lines` (the response's iter_lines()) to keep reading it after [DONE].
     """
     content_parts = []
     tool_slots = {}       # tool-call index -> accumulating {id,type,function{name,arguments}}
     finish_reason = None
     saw_done = False
 
-    for raw in resp.iter_lines(decode_unicode=True):
+    for raw in (resp.iter_lines(decode_unicode=True) if lines is None else lines):
         if raw is None:
             continue
         line = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
@@ -2132,7 +2182,7 @@ def call_copilot_stream(messages, tools=None, model=None):
 
     print(f"[brainstem] STREAM call: model={use_model}, tools={len(tools) if tools else 0}")
 
-    resp = requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 30))
+    resp = _copilot_request("POST", url, headers=headers, json=body, stream=True, timeout=(10, 30))
 
     # Self-heal a server-side-rejected cached token exactly once, like call_copilot.
     if resp.status_code == 401:
@@ -2142,7 +2192,7 @@ def call_copilot_stream(messages, tools=None, model=None):
         copilot_token, endpoint = get_copilot_token()
         url = f"{endpoint}/chat/completions"
         headers["Authorization"] = f"Bearer {copilot_token}"
-        resp = requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 30))
+        resp = _copilot_request("POST", url, headers=headers, json=body, stream=True, timeout=(10, 30))
 
     if resp.status_code != 200:
         detail = ""
@@ -2157,18 +2207,34 @@ def call_copilot_stream(messages, tools=None, model=None):
 
     # Same mojibake guard call_copilot documents: force UTF-8 for decode_unicode.
     resp.encoding = "utf-8"
+    lines = resp.iter_lines(decode_unicode=True)
     try:
-        final = yield from _accumulate_stream(resp)
+        final = yield from _accumulate_stream(resp, lines)
         yield ("done", {
             "message": final["message"],
             "model": use_model,
             "finish_reason": final["finish_reason"],
         })
+        _finish_stream(resp, lines)
     finally:
         # Runs on normal completion AND on GeneratorExit (client disconnect) —
-        # closing the response releases the socket so a dropped SSE client can
-        # never orphan this streaming request.
+        # closing the response hands a fully read connection back to the pool and
+        # closes any other, so a dropped SSE client can never orphan this request.
         resp.close()
+
+
+def _finish_stream(resp, lines):
+    """Read what follows [DONE], normally just the chunked terminator, so the
+    connection goes back to the keep-alive pool instead of being closed. Anything but
+    a prompt end of the body (a 1 s wait at most per read) is left for resp.close()
+    to close, as before."""
+    try:
+        resp.raw.connection.sock.settimeout(1)
+        for n, line in enumerate(lines):
+            if n > 2 or line.strip():
+                return
+    except Exception:
+        pass
 
 # ── Agent execution ───────────────────────────────────────────────────────────
 

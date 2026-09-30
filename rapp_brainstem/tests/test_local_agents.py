@@ -810,7 +810,7 @@ class TestFetchCopilotModels(unittest.TestCase):
         mock_resp.status_code = 200
         mock_resp.json.return_value = payload
         with patch.object(self.brainstem, "get_copilot_token", return_value=("tok", "https://api.example")):
-            with patch("requests.get", return_value=mock_resp):
+            with patch.object(self.brainstem, "_copilot_request", return_value=mock_resp):
                 self.brainstem._fetch_copilot_models()
 
     def test_filters_to_chat_completions_models(self):
@@ -1210,7 +1210,7 @@ class TestCopilotTimeout(unittest.TestCase):
         ok = self._ok_response()
         with patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://api.example")), \
              patch.object(brainstem, "_tlog") as mock_tlog, \
-             patch("requests.post", side_effect=[requests.exceptions.ReadTimeout("boom"), ok]) as mock_post:
+             patch.object(brainstem, "_copilot_request", side_effect=[requests.exceptions.ReadTimeout("boom"), ok]) as mock_post:
             result, model = brainstem.call_copilot([{"role": "user", "content": "hi"}])
 
         self.assertEqual(result["choices"][0]["message"]["content"], "ok")
@@ -1226,7 +1226,7 @@ class TestCopilotTimeout(unittest.TestCase):
                "Read timed out. (read timeout=60)")
         with patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://api.example")), \
              patch.object(brainstem, "_tlog") as mock_tlog, \
-             patch("requests.post", side_effect=requests.exceptions.ReadTimeout(raw)) as mock_post:
+             patch.object(brainstem, "_copilot_request", side_effect=requests.exceptions.ReadTimeout(raw)) as mock_post:
             with self.assertRaises(RuntimeError) as ctx:
                 brainstem.call_copilot([{"role": "user", "content": "hi"}])
 
@@ -1243,7 +1243,7 @@ class TestCopilotTimeout(unittest.TestCase):
         from unittest.mock import patch
         brainstem = self.brainstem
         with patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://api.example")), \
-             patch("requests.post", side_effect=requests.exceptions.ConnectionError("down")) as mock_post:
+             patch.object(brainstem, "_copilot_request", side_effect=requests.exceptions.ConnectionError("down")) as mock_post:
             with self.assertRaises(requests.exceptions.ConnectionError):
                 brainstem.call_copilot([{"role": "user", "content": "hi"}])
 
