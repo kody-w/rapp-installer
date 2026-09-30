@@ -13,6 +13,14 @@ POST /chat    { user_input, conversation_history?, session_id? }
 GET  /health  Status, model, loaded agents, token state
 """
 
+import gc
+
+# The libraries and routes loaded below are tens of thousands of objects that live as
+# long as the server, so garbage-collecting while they load is wasted boot time. Pause
+# GC here; the __main__ block freezes them out of later collections and resumes it.
+if __name__ == "__main__":
+    gc.disable()
+
 import os
 import sys
 import json
@@ -3493,6 +3501,11 @@ def diagnostics_report():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # What the imports above allocated is permanent (bar ~80 KB of import-time garbage,
+    # kept for good). Freeze it so no collection walks it again, and resume normal GC
+    # before any agent code runs or any request is served.
+    gc.freeze()
+    gc.enable()
     _tlog_load()  # Restore previous flight log
     _start_tlog_autosave()
     _tlog("server.starting", {"version": VERSION, "model": MODEL, "port": PORT,
