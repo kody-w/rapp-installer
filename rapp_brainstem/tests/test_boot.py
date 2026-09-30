@@ -22,7 +22,7 @@ import brainstem as bs
 _PROBE = textwrap.dedent("""
     import builtins, gc, json, runpy
 
-    seen = {}
+    seen = {"start": {"enabled": gc.isenabled(), "frozen": gc.get_freeze_count()}}
     real_import = builtins.__import__
 
     def spy(name, globals=None, locals=None, fromlist=(), level=0):
@@ -39,6 +39,16 @@ _PROBE = textwrap.dedent("""
     builtins.__import__ = spy
     runpy.run_path("brainstem.py", run_name="__main__")
     print("PROBE " + json.dumps(seen))
+""")
+
+# Imports brainstem as a module in a fresh interpreter and reports the GC state around it.
+_IMPORT_PROBE = textwrap.dedent("""
+    import gc, json
+
+    start = {"enabled": gc.isenabled(), "frozen": gc.get_freeze_count()}
+    import brainstem
+    after = {"enabled": gc.isenabled(), "frozen": gc.get_freeze_count()}
+    print("PROBE " + json.dumps({"start": start, "after": after}))
 """)
 
 _PROBE_AGENT = textwrap.dedent("""
@@ -61,7 +71,7 @@ _PROBE_AGENT = textwrap.dedent("""
 """)
 
 
-def _run_as_server(tmp_path):
+def _run_probe(tmp_path, probe_code):
     root = tmp_path / "rapp_brainstem"
     (root / "agents").mkdir(parents=True)
     for name in ("brainstem.py", "local_storage.py", "soul.md", "VERSION"):
@@ -78,7 +88,7 @@ def _run_as_server(tmp_path):
            "HTTPS_PROXY": closed, "HTTP_PROXY": closed, "https_proxy": closed, "http_proxy": closed}
     if os.name == "nt":
         env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
-    done = subprocess.run([sys.executable, "-c", _PROBE], cwd=root, env=env, capture_output=True,
+    done = subprocess.run([sys.executable, "-c", probe_code], cwd=root, env=env, capture_output=True,
                           text=True, encoding="utf-8", timeout=120)
     assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
     probe = [line for line in done.stdout.splitlines() if line.startswith("PROBE ")]
@@ -87,11 +97,13 @@ def _run_as_server(tmp_path):
 
 
 def test_server_boot_pauses_gc_while_libraries_load_then_resumes(tmp_path):
-    seen, out = _run_as_server(tmp_path)
+    seen, out = _run_probe(tmp_path, _PROBE)
+    assert seen["start"]["enabled"] is True
     assert seen["requests"] is False and seen["flask"] is False
     # Back on, with the startup objects frozen, before the server would listen.
+    # (CPython 3.12 starts with a few hundred objects already frozen, so compare.)
     assert seen["run"]["enabled"] is True
-    assert seen["run"]["frozen"] > 0
+    assert seen["run"]["frozen"] > seen["start"]["frozen"]
     # Agent code (the startup load_agents sweep) already runs with normal GC.
     assert "GC_AT_AGENT_LOAD True" in out
     assert "GC_AT_AGENT_LOAD False" not in out
@@ -101,8 +113,10 @@ def test_server_boot_pauses_gc_while_libraries_load_then_resumes(tmp_path):
     assert "Model:  gpt-4o" in out
 
 
-def test_importing_brainstem_never_touches_gc():
+def test_importing_brainstem_never_touches_gc(tmp_path):
     # Tests and tools import the module; only `python brainstem.py` pauses GC.
     assert bs.__name__ == "brainstem"
     assert gc.isenabled()
-    assert gc.get_freeze_count() == 0
+    seen, _ = _run_probe(tmp_path, _IMPORT_PROBE)
+    assert seen["start"]["enabled"] is True
+    assert seen["after"] == seen["start"]
