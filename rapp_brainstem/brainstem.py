@@ -419,12 +419,14 @@ _atomic_replace_lock = threading.Lock()
 
 
 def _harden_private_file(path):
-    """Repair permissive modes left by older installers on POSIX."""
-    if os.name != "posix" or not os.path.exists(path):
+    """Repair permissive modes left by older installers on POSIX. A file that is
+    already 0600 is left alone, so routine reads don't rewrite inode metadata."""
+    if os.name != "posix":
         return
     try:
-        os.chmod(path, 0o600)
-    except OSError:
+        if (os.stat(path).st_mode & 0o7777) != 0o600:
+            os.chmod(path, 0o600)
+    except (OSError, ValueError):
         pass
 
 
@@ -486,7 +488,9 @@ def _atomic_write_json(path, data):
         prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, default=str)
+            # Same bytes as json.dump, but dumps uses the C encoder (json.dump runs
+            # the pure-Python one, ~5x slower on a full flight log).
+            f.write(json.dumps(data, default=str))
             f.flush()
             os.fsync(f.fileno())
         with _atomic_replace_lock:
@@ -822,9 +826,15 @@ _flight_log = []
 _flight_log_lock = threading.Lock()
 _FLIGHT_LOG_MAX = 2000
 _flight_log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brainstem_book.json")
+# Bumped on every change to _flight_log, so autosave can skip an unchanged log.
+_flight_log_version = 0
+_flight_log_saved_version = 0
+# Serializes saves, so the file on disk always holds the version recorded as saved.
+_flight_log_save_lock = threading.Lock()
 
 def _tlog(event_type, data=None, level="info"):
     """Append an event to the flight recorder."""
+    global _flight_log_version
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "type": event_type,
@@ -835,14 +845,19 @@ def _tlog(event_type, data=None, level="info"):
     with _flight_log_lock:
         _flight_log.append(entry)
         if len(_flight_log) > _FLIGHT_LOG_MAX:
-            _flight_log[:] = _flight_log[-_FLIGHT_LOG_MAX:]
+            del _flight_log[:-_FLIGHT_LOG_MAX]
+        _flight_log_version += 1
 
 def _tlog_save():
     """Persist flight log to disk (called periodically and on export)."""
+    global _flight_log_saved_version
     try:
-        with _flight_log_lock:
-            snapshot = list(_flight_log)
-        _atomic_write_json(_flight_log_file, snapshot)
+        with _flight_log_save_lock:
+            with _flight_log_lock:
+                snapshot = list(_flight_log)
+                version = _flight_log_version
+            _atomic_write_json(_flight_log_file, snapshot)
+            _flight_log_saved_version = version
     except Exception:
         pass
 
@@ -861,10 +876,11 @@ def _tlog_load():
         pass
 
 def _tlog_autosave():
-    """Background thread: flush flight log to disk every 30s."""
+    """Background thread: flush flight log to disk every 30s, when it has changed."""
     while True:
         time.sleep(30)
-        _tlog_save()
+        if _flight_log_version != _flight_log_saved_version:
+            _tlog_save()
 
 _tlog_autosave_started = False
 _tlog_autosave_lock = threading.Lock()
@@ -3339,8 +3355,10 @@ def diagnostics_export():
 @_require_secret
 def diagnostics_clear():
     """Clear the flight recorder."""
+    global _flight_log_version
     with _flight_log_lock:
         _flight_log.clear()
+        _flight_log_version += 1
     _tlog_save()
     return jsonify({"status": "ok", "message": "Flight recorder cleared."})
 

@@ -672,3 +672,157 @@ def test_soul_reloads_when_file_changes(tmp_path, monkeypatch):
 
     soul.write_text("second soul with a different size", encoding="utf-8")
     assert bs.load_soul() == "second soul with a different size"
+
+
+# ── Request path: private-file checks and the flight recorder skip redundant work
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes only")
+def test_harden_private_file_only_chmods_when_needed(tmp_path, monkeypatch):
+    import stat
+
+    path = tmp_path / "private"
+    path.write_text("x", encoding="utf-8")
+    real_chmod = os.chmod
+    real_chmod(path, 0o644)
+    calls = []
+
+    def counting_chmod(target, mode):
+        calls.append(target)
+        real_chmod(target, mode)
+
+    monkeypatch.setattr(bs.os, "chmod", counting_chmod)
+    bs._harden_private_file(str(path))
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert len(calls) == 1
+    bs._harden_private_file(str(path))      # already private: no metadata write
+    bs._harden_private_file(str(tmp_path / "missing"))
+    assert len(calls) == 1
+
+
+def _token_json(access_token):
+    return json.dumps({"access_token": access_token, "refresh_token": "refresh"})
+
+
+def test_health_sees_a_token_file_change_on_the_next_poll(tmp_path, monkeypatch):
+    import types
+
+    path = tmp_path / ".copilot_token"
+    monkeypatch.setattr(bs, "_token_file", str(path))
+    monkeypatch.setattr(bs, "_invalid_github_credential",
+                        {"fingerprint": None, "status": None, "at": 0})
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    # The gh CLI fallback must not find a real account on the test host.
+    monkeypatch.setattr(bs.subprocess, "run",
+                        lambda *args, **kwargs: types.SimpleNamespace(stdout="", returncode=1))
+    client = bs.app.test_client()
+    old = bs.time.time() - 60
+    path.write_text(_token_json("ghu_" + "a" * 36), encoding="utf-8")
+    os.utime(path, (old, old))
+    assert client.get("/health").get_json()["status"] == "ok"
+    assert client.get("/health").get_json()["status"] == "ok"
+
+    path.unlink()
+    assert client.get("/health").get_json()["status"] == "unauthenticated"
+    path.write_text(_token_json("ghu_" + "b" * 36), encoding="utf-8")
+    assert client.get("/health").get_json()["status"] == "ok"
+
+
+@pytest.fixture
+def flight_log(tmp_path, monkeypatch):
+    book = tmp_path / ".brainstem_book.json"
+    monkeypatch.setattr(bs, "_flight_log", [])
+    monkeypatch.setattr(bs, "_flight_log_file", str(book))
+    monkeypatch.setattr(bs, "_flight_log_version", 0)
+    monkeypatch.setattr(bs, "_flight_log_saved_version", 0)
+    return book
+
+
+def _autosave_tick(monkeypatch):
+    """Run exactly one 30-second iteration of the autosave thread."""
+    class _Stop(Exception):
+        pass
+
+    ticks = []
+
+    def one_tick(seconds):
+        ticks.append(seconds)
+        if len(ticks) > 1:
+            raise _Stop
+
+    monkeypatch.setattr(bs.time, "sleep", one_tick)
+    with pytest.raises(_Stop):
+        bs._tlog_autosave()
+
+
+def test_flight_log_trims_in_place_to_its_cap(flight_log, monkeypatch):
+    monkeypatch.setattr(bs, "_FLIGHT_LOG_MAX", 3)
+    log = bs._flight_log
+    for n in range(5):
+        bs._tlog("test.event", {"n": n})
+    assert bs._flight_log is log
+    assert [entry["data"]["n"] for entry in log] == [2, 3, 4]
+
+
+def test_flight_log_autosave_skips_an_unchanged_log(flight_log, monkeypatch):
+    writes = []
+    real_write = bs._atomic_write_json
+
+    def counting_write(path, data):
+        writes.append(len(data))
+        real_write(path, data)
+
+    monkeypatch.setattr(bs, "_atomic_write_json", counting_write)
+    _autosave_tick(monkeypatch)
+    assert writes == []
+    bs._tlog("test.event", {"n": 1})
+    _autosave_tick(monkeypatch)
+    assert writes == [1]
+    assert json.loads(flight_log.read_text(encoding="utf-8"))[-1]["type"] == "test.event"
+    _autosave_tick(monkeypatch)
+    assert writes == [1]                    # idle: the book is not rewritten
+    bs._tlog("test.event", {"n": 2})
+    _autosave_tick(monkeypatch)
+    assert writes == [1, 2]
+
+
+def test_flight_log_autosave_retries_a_failed_save(flight_log, monkeypatch):
+    real_write = bs._atomic_write_json
+    failures = [OSError("disk full")]
+
+    def flaky_write(path, data):
+        if failures:
+            raise failures.pop()
+        real_write(path, data)
+
+    monkeypatch.setattr(bs, "_atomic_write_json", flaky_write)
+    bs._tlog("test.event")
+    _autosave_tick(monkeypatch)
+    assert not flight_log.exists()
+    _autosave_tick(monkeypatch)
+    assert json.loads(flight_log.read_text(encoding="utf-8"))[0]["type"] == "test.event"
+
+
+def test_clearing_the_flight_log_is_saved_as_a_change(flight_log):
+    bs._tlog("test.event")
+    bs._tlog_save()
+    before = bs._flight_log_version
+    assert bs.app.test_client().post("/diagnostics/clear").status_code == 200
+    assert bs._flight_log_version == before + 1
+    assert bs._flight_log_saved_version == bs._flight_log_version
+    assert json.loads(flight_log.read_text(encoding="utf-8")) == []
+
+
+def test_atomic_write_json_bytes_match_json_dump(tmp_path):
+    import io
+
+    class Opaque:
+        def __str__(self):
+            return "opaque"
+
+    payload = {"text": "caf\u00e9 \U0001f9e0 \u2014", "numbers": [1, 2.5, 1e-7, True, None],
+               "object": Opaque(), "nested": {"list": [{}, []]}}
+    expected = io.StringIO()
+    json.dump(payload, expected, default=str)
+    path = tmp_path / "state.json"
+    bs._atomic_write_json(str(path), payload)
+    assert path.read_bytes() == expected.getvalue().encode("utf-8")
