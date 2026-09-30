@@ -13,6 +13,14 @@ POST /chat    { user_input, conversation_history?, session_id? }
 GET  /health  Status, model, loaded agents, token state
 """
 
+import gc
+
+# The libraries and routes loaded below are tens of thousands of objects that live as
+# long as the server, so garbage-collecting while they load is wasted boot time. Pause
+# GC here; the __main__ block freezes them out of later collections and resumes it.
+if __name__ == "__main__":
+    gc.disable()
+
 import os
 import sys
 import json
@@ -31,6 +39,7 @@ import tempfile
 import ipaddress
 import hashlib
 import platform
+import http.cookiejar
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
@@ -417,12 +426,14 @@ _atomic_replace_lock = threading.Lock()
 
 
 def _harden_private_file(path):
-    """Repair permissive modes left by older installers on POSIX."""
-    if os.name != "posix" or not os.path.exists(path):
+    """Repair permissive modes left by older installers on POSIX. A file that is
+    already 0600 is left alone, so routine reads don't rewrite inode metadata."""
+    if os.name != "posix":
         return
     try:
-        os.chmod(path, 0o600)
-    except OSError:
+        if (os.stat(path).st_mode & 0o7777) != 0o600:
+            os.chmod(path, 0o600)
+    except (OSError, ValueError):
         pass
 
 
@@ -484,7 +495,9 @@ def _atomic_write_json(path, data):
         prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, default=str)
+            # Same bytes as json.dump, but dumps uses the C encoder (json.dump runs
+            # the pure-Python one, ~5x slower on a full flight log).
+            f.write(json.dumps(data, default=str))
             f.flush()
             os.fsync(f.fileno())
         with _atomic_replace_lock:
@@ -756,7 +769,8 @@ def _fetch_copilot_models():
         return
     try:
         copilot_token, endpoint = get_copilot_token()
-        resp = requests.get(
+        resp = _copilot_request(
+            "GET",
             f"{endpoint}/models",
             headers={
                 "Authorization": f"Bearer {copilot_token}",
@@ -819,9 +833,15 @@ _flight_log = []
 _flight_log_lock = threading.Lock()
 _FLIGHT_LOG_MAX = 2000
 _flight_log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".brainstem_book.json")
+# Bumped on every change to _flight_log, so autosave can skip an unchanged log.
+_flight_log_version = 0
+_flight_log_saved_version = 0
+# Serializes saves, so the file on disk always holds the version recorded as saved.
+_flight_log_save_lock = threading.Lock()
 
 def _tlog(event_type, data=None, level="info"):
     """Append an event to the flight recorder."""
+    global _flight_log_version
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "type": event_type,
@@ -832,14 +852,19 @@ def _tlog(event_type, data=None, level="info"):
     with _flight_log_lock:
         _flight_log.append(entry)
         if len(_flight_log) > _FLIGHT_LOG_MAX:
-            _flight_log[:] = _flight_log[-_FLIGHT_LOG_MAX:]
+            del _flight_log[:-_FLIGHT_LOG_MAX]
+        _flight_log_version += 1
 
 def _tlog_save():
     """Persist flight log to disk (called periodically and on export)."""
+    global _flight_log_saved_version
     try:
-        with _flight_log_lock:
-            snapshot = list(_flight_log)
-        _atomic_write_json(_flight_log_file, snapshot)
+        with _flight_log_save_lock:
+            with _flight_log_lock:
+                snapshot = list(_flight_log)
+                version = _flight_log_version
+            _atomic_write_json(_flight_log_file, snapshot)
+            _flight_log_saved_version = version
     except Exception:
         pass
 
@@ -858,10 +883,11 @@ def _tlog_load():
         pass
 
 def _tlog_autosave():
-    """Background thread: flush flight log to disk every 30s."""
+    """Background thread: flush flight log to disk every 30s, when it has changed."""
     while True:
         time.sleep(30)
-        _tlog_save()
+        if _flight_log_version != _flight_log_saved_version:
+            _tlog_save()
 
 _tlog_autosave_started = False
 _tlog_autosave_lock = threading.Lock()
@@ -1637,6 +1663,47 @@ def _quarantine_snapshot():
         ]
 
 
+# Compiled code of agent files, reused while a file is unchanged. Every request still
+# executes it into a fresh module (fresh globals, classes and instances), exactly as
+# before; only loading or compiling it again is skipped. {path: (signature, source,
+# code, checked_ns)}; source is None when the code came from __pycache__. Entries are
+# replaced, never modified, and a file that fails to compile is not cached.
+_agent_code_cache = {}
+_agent_code_lock = threading.Lock()
+# A file stamped within this window of our last look could still change without
+# moving any stat field, so its bytes are compared: whole-second timestamps may come
+# from a filesystem that keeps only 1-2 s (HFS+, FAT), finer ones trail by a tick.
+_AGENT_RACY_NS = 3_000_000_000
+_AGENT_RACY_FINE_NS = 100_000_000
+
+
+def _agent_code(filepath, spec):
+    """Code object for filepath's current contents, loaded or compiled once per
+    version of the file."""
+    checked_ns = time.time_ns()
+    st = os.stat(filepath)
+    signature = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    stamp = max(st.st_mtime_ns, st.st_ctime_ns)
+    racy_ns = _AGENT_RACY_FINE_NS if st.st_mtime_ns % 1_000_000_000 else _AGENT_RACY_NS
+    old_signature, old_source, old_code, old_checked_ns = _agent_code_cache.get(
+        filepath, (None, None, None, 0))
+    if signature == old_signature and stamp < old_checked_ns - racy_ns:
+        return old_code
+    if old_code is None and stamp < checked_ns - racy_ns:
+        # A settled file's first load goes through __pycache__, as it always has.
+        source, code = None, spec.loader.get_code(spec.name)
+    else:
+        # Python checks __pycache__ only to the second and the size, so a file that
+        # changed, or was stamped too recently to tell, is compiled from its bytes.
+        with open(filepath, "rb") as f:
+            source = f.read()
+        code = old_code if source == old_source else compile(
+            source, filepath, "exec", dont_inherit=True)
+    with _agent_code_lock:
+        _agent_code_cache[filepath] = (signature, source, code, checked_ns)
+    return code
+
+
 def _load_agent_from_file(filepath):
     """Load agent classes from a single .py file. Returns dict of name→instance.
     Auto-installs missing pip packages and shims cloud deps to local storage."""
@@ -1658,7 +1725,7 @@ def _load_agent_from_file(filepath):
             mod_name = f"agent_{os.path.basename(filepath).replace('.', '_')}_{id(filepath)}_{attempt}"
             spec = importlib.util.spec_from_file_location(mod_name, filepath)
             mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            exec(_agent_code(filepath, spec), mod.__dict__)
             for attr in dir(mod):
                 cls = getattr(mod, attr)
                 if (
@@ -1829,13 +1896,20 @@ def _auto_install(package):
     _failed_installs.add(package)
     return False
 
+# The code each agent was last announced with: "Agent loaded" is printed when an agent
+# is new or its file's code changed, not for every agent on every request.
+_announced_agents = {}
+
 def load_agents():
+    global _announced_agents
     agents = {}
+    announced = {}
     pattern = os.path.join(AGENTS_PATH, "*_agent.py")
     files = sorted(glob.glob(pattern))
 
     for filepath in files:
         loaded = _load_agent_from_file(filepath)
+        code = _agent_code_cache.get(filepath, (None,) * 4)[2]
         for name, instance in loaded.items():
             if name in agents:
                 _quarantine_agent(
@@ -1845,16 +1919,65 @@ def load_agents():
                 )
                 continue
             agents[name] = instance
-            print(f"[brainstem] Agent loaded: {name}")
+            announced[name] = code
+            if _announced_agents.get(name) is not code:
+                print(f"[brainstem] Agent loaded: {name}")
 
     # Rebuild the quarantine registry to this sweep: drop entries for files that are
     # gone (deleted/renamed). Each present file was just re-validated above.
     with _quarantine_lock:
         for gone in [f for f in _quarantined_agents if f not in files]:
             _quarantined_agents.pop(gone, None)
+    # Likewise forget the code of files that are gone.
+    with _agent_code_lock:
+        for gone in _agent_code_cache.keys() - set(files):
+            del _agent_code_cache[gone]
+    _announced_agents = announced
 
     print(f"[brainstem] {len(agents)} agent(s) ready.")
     return agents
+
+# ── Copilot HTTP keep-alive ───────────────────────────────────────────────────
+#
+# Copilot API calls (chat, streaming, /models) share one requests.Session, so
+# back-to-back calls (tool rounds, the next turn) reuse a warm connection instead of
+# paying a new TCP + TLS handshake and CA-bundle load each time. Each call still sends
+# exactly what requests.post/get would: the session keeps no cookies, and proxy/CA
+# settings are read from the environment per call. The token exchange and login calls
+# go to github.com minutes apart, so they stay one-shot.
+#
+# A pooled socket can die unnoticed (sleep, a network change; Copilot itself closes
+# idle connections after 120 s), so a pool idle for _COPILOT_IDLE_S is replaced, not
+# trusted. Idle time is wall clock: time.monotonic() stops during sleep on macOS.
+_COPILOT_IDLE_S = 20
+_copilot_http = None
+_copilot_http_used = 0.0
+_copilot_http_lock = threading.Lock()
+
+
+def _copilot_request(method, url, **kwargs):
+    """requests.request(method, url, **kwargs) on the shared Copilot session."""
+    global _copilot_http, _copilot_http_used
+    with _copilot_http_lock:
+        now = time.time()
+        warm = _copilot_http is not None and 0 <= now - _copilot_http_used < _COPILOT_IDLE_S
+        if not warm:
+            _copilot_http = requests.Session()
+            _copilot_http.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+        _copilot_http_used = now
+        session = _copilot_http
+    try:
+        return session.request(method, url, **kwargs)
+    except requests.exceptions.ConnectionError as e:
+        # Never resend: the server may already have run (and billed) the request before
+        # the connection failed. Fail exactly as a one-shot call would, and stop trusting
+        # the rest of this pool so the next call starts fresh.
+        if warm:
+            with _copilot_http_lock:
+                if _copilot_http is session:
+                    _copilot_http = None
+                    _tlog("api.connection_pool_dropped", {"error": str(e)[:200]}, level="warn")
+        raise
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
@@ -1897,12 +2020,12 @@ def call_copilot(messages, tools=None):
     # transient hiccup or a cold model, so retry ONCE (mirroring the 401 path) before
     # giving up — and never let the raw urllib3 timeout text escape to the user.
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+        resp = _copilot_request("POST", url, headers=headers, json=body, timeout=(10, 120))
     except requests.exceptions.Timeout:
         _tlog("api.timeout_retry", {"model": MODEL}, level="warn")
         print("[brainstem] Copilot request timed out — retrying once")
         try:
-            resp = requests.post(url, headers=headers, json=body, timeout=(10, 120))
+            resp = _copilot_request("POST", url, headers=headers, json=body, timeout=(10, 120))
         except requests.exceptions.Timeout as e:
             _tlog("api.timeout", {"model": MODEL, "detail": str(e)[:300]}, level="error")
             print(f"[brainstem] Copilot request timed out again, giving up: {e}")
@@ -1921,7 +2044,7 @@ def call_copilot(messages, tools=None):
             copilot_token, endpoint = get_copilot_token()
             url = f"{endpoint}/chat/completions"
             headers["Authorization"] = f"Bearer {copilot_token}"
-            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            resp = _copilot_request("POST", url, headers=headers, json=body, timeout=60)
         except Exception as e:
             print(f"[brainstem] Token refresh after 401 failed: {e}")
 
@@ -1948,7 +2071,7 @@ def call_copilot(messages, tools=None):
                     body.pop("tool_choice", None)
                 elif tools and "tool_choice" not in body:
                     body["tool_choice"] = "auto"
-                resp = requests.post(url, headers=headers, json=body, timeout=60)
+                resp = _copilot_request("POST", url, headers=headers, json=body, timeout=60)
                 if resp.status_code == 200:
                     break
                 print(f"[brainstem] {fallback_model} also failed ({resp.status_code})")
@@ -2019,7 +2142,7 @@ class StreamingUnsupported(Exception):
         super().__init__(f"Model '{model}' rejected streaming ({status}): {str(detail)[:200]}")
 
 
-def _accumulate_stream(resp):
+def _accumulate_stream(resp, lines=None):
     """Parse a Copilot SSE (`stream:true`) response.
 
     Yields ('delta', text) for each content fragment the instant it arrives, and
@@ -2032,13 +2155,17 @@ def _accumulate_stream(resp):
         single call whose id/name/arguments are split across many chunks rebuilds
         into one call. Claude-style multi-choice deltas (text on one choice,
         tool_calls on another) therefore merge correctly too.
+
+    Pass `lines` (the response's iter_lines()) to keep reading it after [DONE].
     """
     content_parts = []
     tool_slots = {}       # tool-call index -> accumulating {id,type,function{name,arguments}}
     finish_reason = None
     saw_done = False
 
-    for raw in resp.iter_lines(decode_unicode=True):
+    # Byte lines: an SSE line ends only at CR/LF, but str.splitlines() also breaks on
+    # U+0085/U+2028/U+2029, which JSON strings may carry unescaped.
+    for raw in (resp.iter_lines() if lines is None else lines):
         if raw is None:
             continue
         line = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
@@ -2132,7 +2259,7 @@ def call_copilot_stream(messages, tools=None, model=None):
 
     print(f"[brainstem] STREAM call: model={use_model}, tools={len(tools) if tools else 0}")
 
-    resp = requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 30))
+    resp = _copilot_request("POST", url, headers=headers, json=body, stream=True, timeout=(10, 30))
 
     # Self-heal a server-side-rejected cached token exactly once, like call_copilot.
     if resp.status_code == 401:
@@ -2142,7 +2269,7 @@ def call_copilot_stream(messages, tools=None, model=None):
         copilot_token, endpoint = get_copilot_token()
         url = f"{endpoint}/chat/completions"
         headers["Authorization"] = f"Bearer {copilot_token}"
-        resp = requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 30))
+        resp = _copilot_request("POST", url, headers=headers, json=body, stream=True, timeout=(10, 30))
 
     if resp.status_code != 200:
         detail = ""
@@ -2155,20 +2282,45 @@ def call_copilot_stream(messages, tools=None, model=None):
                                      "detail": detail[:200]}, level="warn")
         raise StreamingUnsupported(resp.status_code, detail, use_model)
 
-    # Same mojibake guard call_copilot documents: force UTF-8 for decode_unicode.
-    resp.encoding = "utf-8"
+    lines = resp.iter_lines()
     try:
-        final = yield from _accumulate_stream(resp)
+        final = yield from _accumulate_stream(resp, lines)
         yield ("done", {
             "message": final["message"],
             "model": use_model,
             "finish_reason": final["finish_reason"],
         })
+        _finish_stream(resp)
     finally:
         # Runs on normal completion AND on GeneratorExit (client disconnect) —
-        # closing the response releases the socket so a dropped SSE client can
-        # never orphan this streaming request.
+        # closing the response hands a fully read connection back to the pool and
+        # closes any other, so a dropped SSE client can never orphan this request.
         resp.close()
+
+
+def _finish_stream(resp):
+    """Read what follows [DONE], normally just the chunked terminator, so the
+    connection goes back to the keep-alive pool instead of being closed. The wait is
+    bounded in total, however the bytes trickle in: past 1 s or 64 KB, resp.close()
+    closes the connection, as before."""
+    try:
+        conn = resp.raw.connection
+        sock = conn.sock
+        deadline = time.monotonic() + 1
+        budget = 65536
+        sock.settimeout(1)
+        # Raw chunks, not lines: a body that never sends another line end still
+        # hands control back here after every chunk.
+        for chunk in resp.raw.stream(1024, decode_content=True):
+            budget -= len(chunk)
+            left = deadline - time.monotonic()
+            # A body that ends by length is handed back to the pool before its last
+            # chunk arrives here; from then on the socket may be another call's.
+            if budget < 0 or left <= 0 or resp.raw.connection is not conn:
+                return
+            sock.settimeout(left)
+    except Exception:
+        pass
 
 # ── Agent execution ───────────────────────────────────────────────────────────
 
@@ -3273,8 +3425,10 @@ def diagnostics_export():
 @_require_secret
 def diagnostics_clear():
     """Clear the flight recorder."""
+    global _flight_log_version
     with _flight_log_lock:
         _flight_log.clear()
+        _flight_log_version += 1
     _tlog_save()
     return jsonify({"status": "ok", "message": "Flight recorder cleared."})
 
@@ -3413,6 +3567,11 @@ def diagnostics_report():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # What the imports above allocated is permanent (bar ~80 KB of import-time garbage,
+    # kept for good). Freeze it so no collection walks it again, and resume normal GC
+    # before any agent code runs or any request is served.
+    gc.freeze()
+    gc.enable()
     _tlog_load()  # Restore previous flight log
     _start_tlog_autosave()
     _tlog("server.starting", {"version": VERSION, "model": MODEL, "port": PORT,
