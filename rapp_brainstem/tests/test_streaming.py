@@ -11,6 +11,7 @@ plus endpoint-level wiring: delta+done events, internal non-streaming fallback,
 and a tool round emitting an 'agent' event.
 """
 
+import io
 import os
 import sys
 import json
@@ -123,6 +124,26 @@ class TestDeltaAccumulation(unittest.TestCase):
 
         with self.assertRaises(brainstem.requests.exceptions.ConnectionError):
             _drive_accum(brainstem._accumulate_stream(FakeStreamResp(lines)))
+
+    def test_unicode_line_separators_inside_json_keep_their_delta(self):
+        # JSON may carry U+0085/U+2028/U+2029 unescaped, but an SSE line ends only at
+        # CR/LF. A real requests.Response (not the line-list fake) exercises the split.
+        pieces = ["one", "\u2028two", " three\u0085", "\u2029four"]
+        body = "".join(
+            "data: " + json.dumps({"choices": [{"delta": {"content": p}}]}, ensure_ascii=False) + "\n\n"
+            for p in pieces
+        ) + "data: [DONE]\n\n"
+        resp = brainstem.requests.models.Response()
+        resp.status_code = 200
+        resp.headers["Content-Type"] = "text/event-stream"
+        resp.encoding = "ISO-8859-1"  # what requests infers for text/* without a charset
+        resp.raw = io.BytesIO(body.encode("utf-8"))
+        with mock.patch.object(brainstem, "get_copilot_token", return_value=("tok", "https://ep/v1")), \
+             mock.patch.object(brainstem, "_copilot_request", return_value=resp):
+            events = list(brainstem.call_copilot_stream([{"role": "user", "content": "hi"}], model="gpt-4o"))
+        self.assertEqual([p for kind, p in events if kind == "delta"], pieces)
+        done = [p for kind, p in events if kind == "done"][0]
+        self.assertEqual(done["message"]["content"], "".join(pieces))
 
 
 class TestToolCallMerging(unittest.TestCase):

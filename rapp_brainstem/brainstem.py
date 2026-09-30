@@ -2088,7 +2088,9 @@ def _accumulate_stream(resp, lines=None):
     finish_reason = None
     saw_done = False
 
-    for raw in (resp.iter_lines(decode_unicode=True) if lines is None else lines):
+    # Byte lines: an SSE line ends only at CR/LF, but str.splitlines() also breaks on
+    # U+0085/U+2028/U+2029, which JSON strings may carry unescaped.
+    for raw in (resp.iter_lines() if lines is None else lines):
         if raw is None:
             continue
         line = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
@@ -2205,9 +2207,7 @@ def call_copilot_stream(messages, tools=None, model=None):
                                      "detail": detail[:200]}, level="warn")
         raise StreamingUnsupported(resp.status_code, detail, use_model)
 
-    # Same mojibake guard call_copilot documents: force UTF-8 for decode_unicode.
-    resp.encoding = "utf-8"
-    lines = resp.iter_lines(decode_unicode=True)
+    lines = resp.iter_lines()
     try:
         final = yield from _accumulate_stream(resp, lines)
         yield ("done", {
