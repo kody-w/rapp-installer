@@ -70,9 +70,11 @@ def _run_as_server(tmp_path):
     (root / "agents" / "gc_probe_agent.py").write_text(_PROBE_AGENT, encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir()
-    closed = "http://127.0.0.1:9"  # any stray request fails fast instead of leaving
+    closed = "http://127.0.0.1:9"  # a stray request fails fast instead of reaching GitHub
+    # Blank values also keep any stray .env above tmp_path from changing the outcome.
     env = {"HOME": str(home), "PATH": os.pathsep.join([os.path.dirname(sys.executable), "/usr/bin", "/bin"]),
-           "GITHUB_TOKEN": "", "LANG": "en_US.UTF-8", "PYTHONUNBUFFERED": "1",
+           "GITHUB_TOKEN": "", "GITHUB_MODEL": "", "AGENTS_PATH": "", "LANG": "en_US.UTF-8",
+           "PYTHONUNBUFFERED": "1",
            "HTTPS_PROXY": closed, "HTTP_PROXY": closed, "https_proxy": closed, "http_proxy": closed}
     if os.name == "nt":
         env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
