@@ -30,6 +30,8 @@ class _FakeCopilot:
         self.drop_all = False       # hang up on every request, unanswered
         self.slow = 0.0             # seconds to sit on a POST before answering
         self.hold_after_done = 0.0  # seconds between the [DONE] event and the body's end
+        self.trickle_after_done = 0.0  # seconds of one-byte chunks (5 a second) after [DONE]
+        self.after_done = b""       # raw chunks sent between [DONE] and the body's end
         lock = threading.Lock()
         fake = self
 
@@ -87,7 +89,13 @@ class _FakeCopilot:
                     self.wfile.write(events)
                     time.sleep(fake.hold_after_done)
                     events = b""
-                self.wfile.write(events + b"0\r\n\r\n")
+                if fake.trickle_after_done:  # bytes keep coming, but never a line end
+                    self.wfile.write(events)
+                    events = b""
+                    for _ in range(int(fake.trickle_after_done * 5)):
+                        time.sleep(0.2)
+                        self.wfile.write(b"1\r\n \r\n")
+                self.wfile.write(events + fake.after_done + b"0\r\n\r\n")
 
         class Server(ThreadingHTTPServer):
             daemon_threads = True
@@ -160,6 +168,26 @@ def test_stream_whose_body_never_ends_still_finishes_promptly(fake):
     fake.hold_after_done = 0
     _stream()
     assert fake.conns == 2  # the unfinished connection was closed, not reused
+
+
+def test_stream_that_trickles_after_done_still_finishes_promptly(fake):
+    # The reviewer's case: a byte every 0.2 s keeps each read alive and never ends a line.
+    fake.trickle_after_done = 10
+    started = time.monotonic()
+    events = _stream()
+    assert events[-1][0] == "done" and events[-1][1]["message"]["content"] == "Hello there"
+    assert time.monotonic() - started < 5  # the drain gives up after 1 s in total, not 10 s
+    fake.trickle_after_done = 0
+    _stream()
+    assert fake.conns == 2  # the unfinished connection was closed, not reused
+
+
+def test_bytes_after_done_are_read_through_and_the_connection_reused(fake):
+    heartbeat = b": keep-alive\n\n"
+    fake.after_done = b"%X\r\n%s\r\n" % (len(heartbeat), heartbeat)
+    for _ in range(2):
+        assert _stream()[-1][1]["message"]["content"] == "Hello there"
+    assert fake.conns == 1
 
 
 def test_pool_idle_past_the_limit_is_replaced(fake):

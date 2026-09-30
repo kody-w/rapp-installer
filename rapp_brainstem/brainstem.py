@@ -2290,7 +2290,7 @@ def call_copilot_stream(messages, tools=None, model=None):
             "model": use_model,
             "finish_reason": final["finish_reason"],
         })
-        _finish_stream(resp, lines)
+        _finish_stream(resp)
     finally:
         # Runs on normal completion AND on GeneratorExit (client disconnect) —
         # closing the response hands a fully read connection back to the pool and
@@ -2298,16 +2298,24 @@ def call_copilot_stream(messages, tools=None, model=None):
         resp.close()
 
 
-def _finish_stream(resp, lines):
+def _finish_stream(resp):
     """Read what follows [DONE], normally just the chunked terminator, so the
-    connection goes back to the keep-alive pool instead of being closed. Anything but
-    a prompt end of the body (a 1 s wait at most per read) is left for resp.close()
-    to close, as before."""
+    connection goes back to the keep-alive pool instead of being closed. The wait is
+    bounded in total, however the bytes trickle in: past 1 s or 64 KB, resp.close()
+    closes the connection, as before."""
     try:
-        resp.raw.connection.sock.settimeout(1)
-        for n, line in enumerate(lines):
-            if n > 2 or line.strip():
+        sock = resp.raw.connection.sock
+        deadline = time.monotonic() + 1
+        budget = 65536
+        sock.settimeout(1)
+        # Raw chunks, not lines: a body that never sends another line end still
+        # hands control back here after every chunk.
+        for chunk in resp.raw.stream(1024, decode_content=True):
+            budget -= len(chunk)
+            left = deadline - time.monotonic()
+            if budget < 0 or left <= 0:
                 return
+            sock.settimeout(left)
     except Exception:
         pass
 
