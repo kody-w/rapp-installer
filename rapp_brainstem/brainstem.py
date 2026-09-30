@@ -1663,6 +1663,47 @@ def _quarantine_snapshot():
         ]
 
 
+# Compiled code of agent files, reused while a file is unchanged. Every request still
+# executes it into a fresh module (fresh globals, classes and instances), exactly as
+# before; only loading or compiling it again is skipped. {path: (signature, source,
+# code, checked_ns)}; source is None when the code came from __pycache__. Entries are
+# replaced, never modified, and a file that fails to compile is not cached.
+_agent_code_cache = {}
+_agent_code_lock = threading.Lock()
+# A file stamped within this window of our last look could still change without
+# moving any stat field, so its bytes are compared: whole-second timestamps may come
+# from a filesystem that keeps only 1-2 s (HFS+, FAT), finer ones trail by a tick.
+_AGENT_RACY_NS = 3_000_000_000
+_AGENT_RACY_FINE_NS = 100_000_000
+
+
+def _agent_code(filepath, spec):
+    """Code object for filepath's current contents, loaded or compiled once per
+    version of the file."""
+    checked_ns = time.time_ns()
+    st = os.stat(filepath)
+    signature = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    stamp = max(st.st_mtime_ns, st.st_ctime_ns)
+    racy_ns = _AGENT_RACY_FINE_NS if st.st_mtime_ns % 1_000_000_000 else _AGENT_RACY_NS
+    old_signature, old_source, old_code, old_checked_ns = _agent_code_cache.get(
+        filepath, (None, None, None, 0))
+    if signature == old_signature and stamp < old_checked_ns - racy_ns:
+        return old_code
+    if old_code is None and stamp < checked_ns - racy_ns:
+        # A settled file's first load goes through __pycache__, as it always has.
+        source, code = None, spec.loader.get_code(spec.name)
+    else:
+        # Python checks __pycache__ only to the second and the size, so a file that
+        # changed, or was stamped too recently to tell, is compiled from its bytes.
+        with open(filepath, "rb") as f:
+            source = f.read()
+        code = old_code if source == old_source else compile(
+            source, filepath, "exec", dont_inherit=True)
+    with _agent_code_lock:
+        _agent_code_cache[filepath] = (signature, source, code, checked_ns)
+    return code
+
+
 def _load_agent_from_file(filepath):
     """Load agent classes from a single .py file. Returns dict of name→instance.
     Auto-installs missing pip packages and shims cloud deps to local storage."""
@@ -1684,7 +1725,7 @@ def _load_agent_from_file(filepath):
             mod_name = f"agent_{os.path.basename(filepath).replace('.', '_')}_{id(filepath)}_{attempt}"
             spec = importlib.util.spec_from_file_location(mod_name, filepath)
             mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            exec(_agent_code(filepath, spec), mod.__dict__)
             for attr in dir(mod):
                 cls = getattr(mod, attr)
                 if (
@@ -1855,13 +1896,20 @@ def _auto_install(package):
     _failed_installs.add(package)
     return False
 
+# The code each agent was last announced with: "Agent loaded" is printed when an agent
+# is new or its file's code changed, not for every agent on every request.
+_announced_agents = {}
+
 def load_agents():
+    global _announced_agents
     agents = {}
+    announced = {}
     pattern = os.path.join(AGENTS_PATH, "*_agent.py")
     files = sorted(glob.glob(pattern))
 
     for filepath in files:
         loaded = _load_agent_from_file(filepath)
+        code = _agent_code_cache.get(filepath, (None,) * 4)[2]
         for name, instance in loaded.items():
             if name in agents:
                 _quarantine_agent(
@@ -1871,13 +1919,20 @@ def load_agents():
                 )
                 continue
             agents[name] = instance
-            print(f"[brainstem] Agent loaded: {name}")
+            announced[name] = code
+            if _announced_agents.get(name) is not code:
+                print(f"[brainstem] Agent loaded: {name}")
 
     # Rebuild the quarantine registry to this sweep: drop entries for files that are
     # gone (deleted/renamed). Each present file was just re-validated above.
     with _quarantine_lock:
         for gone in [f for f in _quarantined_agents if f not in files]:
             _quarantined_agents.pop(gone, None)
+    # Likewise forget the code of files that are gone.
+    with _agent_code_lock:
+        for gone in _agent_code_cache.keys() - set(files):
+            del _agent_code_cache[gone]
+    _announced_agents = announced
 
     print(f"[brainstem] {len(agents)} agent(s) ready.")
     return agents

@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+import contextlib
 
 # Ensure brainstem dir is importable. This test lives in rapp_brainstem/tests/,
 # so the brainstem package dir (holding brainstem.py, soul.md, soul_defaults.sha256)
@@ -1173,6 +1174,519 @@ class NoParamsAgent(BasicAgent):
         self.assertIn("TechReviewer", agents)
         self.assertNotIn(path, self.brainstem._quarantined_agents)
         self.assertEqual(self.brainstem._quarantine_snapshot(), [])
+
+
+class TestAgentCodeCache(unittest.TestCase):
+    """load_agents() runs on every /chat, /chat/stream and /health. Every load still
+    executes every agent file into a fresh module (fresh globals, classes and
+    instances), exactly as before; only the compiled code is reused while a file is
+    unchanged, so a new, edited, replaced, failed or deleted file takes effect on the
+    very next load."""
+
+    def setUp(self):
+        import brainstem
+        import local_storage
+        self.brainstem = brainstem
+        self._tmp = tempfile.mkdtemp()
+        self._log = os.path.join(self._tmp, "runs.log")
+        self._orig = {
+            "agents_path": brainstem.AGENTS_PATH,
+            "data_dir": local_storage._DATA_DIR,
+            "code": dict(brainstem._agent_code_cache),
+            "announced": brainstem._announced_agents,
+            "quarantined": dict(brainstem._quarantined_agents),
+            "logged": set(brainstem._quarantine_logged),
+        }
+        brainstem.AGENTS_PATH = self._tmp
+        local_storage._DATA_DIR = os.path.join(self._tmp, "data")
+        brainstem._agent_code_cache.clear()
+        brainstem._announced_agents = {}
+        brainstem._quarantined_agents.clear()
+        brainstem._shims_registered = False
+        with brainstem._flight_log_lock:
+            self._orig["flight"] = list(brainstem._flight_log)
+
+    def tearDown(self):
+        import local_storage
+        bs = self.brainstem
+        bs.AGENTS_PATH = self._orig["agents_path"]
+        local_storage._DATA_DIR = self._orig["data_dir"]
+        for registry, key in ((bs._agent_code_cache, "code"), (bs._quarantined_agents, "quarantined")):
+            registry.clear()
+            registry.update(self._orig[key])
+        bs._announced_agents = self._orig["announced"]
+        bs._quarantine_logged.clear()
+        bs._quarantine_logged.update(self._orig["logged"])
+        with bs._flight_log_lock:
+            bs._flight_log[:] = self._orig["flight"]
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _agent(self, result="v1", name='"Counted"', module_code="", init_code="pass"):
+        """An agent whose module appends a line to runs.log every time it executes."""
+        return f'''import os
+from agents.basic_agent import BasicAgent
+
+with open({self._log!r}, "a") as _log:
+    _log.write("ran\\n")
+{module_code}
+
+class CountedAgent(BasicAgent):
+    def __init__(self):
+        {init_code}
+        self.name = {name}
+        self.metadata = {{"name": self.name, "description": "Counts its module runs.",
+                         "parameters": {{"type": "object", "properties": {{}}}}}}
+        super().__init__(name=self.name, metadata=self.metadata)
+
+    def perform(self, **kwargs):
+        return {result!r}
+'''
+
+    def _write(self, source, filename="counted_agent.py"):
+        path = os.path.join(self._tmp, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(source)
+        return path
+
+    def _runs(self):
+        if not os.path.exists(self._log):
+            return 0
+        with open(self._log, encoding="utf-8") as f:
+            return len(f.read().splitlines())
+
+    def _racy_window(self, ns):
+        """Pretend every file is settled (negative) or recently stamped (large)."""
+        from unittest.mock import patch
+        return patch.multiple(self.brainstem, _AGENT_RACY_NS=ns, _AGENT_RACY_FINE_NS=ns)
+
+    @contextlib.contextmanager
+    def _counting(self):
+        """Record the files compiled from their bytes and loaded through __pycache__."""
+        import builtins
+        import importlib.machinery
+        from unittest.mock import patch
+        calls = {"compiled": [], "loaded": []}
+        real_get_code = importlib.machinery.SourceFileLoader.get_code
+
+        def counting_compile(source, filename, *args, **kwargs):
+            calls["compiled"].append(filename)
+            return builtins.compile(source, filename, *args, **kwargs)
+
+        def counting_get_code(loader, fullname):
+            calls["loaded"].append(loader.path)
+            return real_get_code(loader, fullname)
+
+        with patch.object(self.brainstem, "compile", counting_compile, create=True), \
+             patch.object(importlib.machinery.SourceFileLoader, "get_code", counting_get_code):
+            yield calls
+
+    def _same_size_edit(self, path, before, source):
+        """Rewrite path with same-size source and put its old mtime back, as a quick
+        edit within the same second leaves it."""
+        self._write(source, os.path.basename(path))
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertEqual(os.stat(path).st_size, before.st_size)
+
+    # ── every request still runs every file ──────────────────────────────────
+
+    def test_module_body_runs_every_load_while_code_is_loaded_once_per_version(self):
+        path = self._write(self._agent(result="v1"))
+        before = os.stat(path)
+        with self._counting() as calls:
+            with self._racy_window(-10**12):  # settled: loaded through __pycache__
+                first = self.brainstem.load_agents()["Counted"]
+                second = self.brainstem.load_agents()["Counted"]
+                self.brainstem.load_agents()
+            self.assertEqual(self._runs(), 3)
+            self.assertEqual(calls["loaded"].count(path), 1)
+            self.assertEqual(calls["compiled"].count(path), 0)
+            self.assertIsNot(first, second)
+            self.assertIsNot(type(first), type(second))  # a fresh module every load
+
+            self._same_size_edit(path, before, self._agent(result="v2"))
+            with self._racy_window(10**10):
+                self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+            with self._racy_window(-10**12):
+                self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+                self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+
+        self.assertEqual(self._runs(), 6)
+        self.assertEqual(calls["compiled"].count(path), 1)
+        self.assertEqual(calls["loaded"].count(path), 1)
+
+    def test_class_and_module_state_start_empty_on_every_request(self):
+        """An existing agent may keep what one user told it in class or module state
+        and show it in system_context(); the next session must not see it."""
+        from unittest.mock import patch
+        self._write('''from agents.basic_agent import BasicAgent
+
+_noted_by_module = []
+
+
+class RecorderAgent(BasicAgent):
+    noted = []
+
+    def __init__(self):
+        self.name = "Recorder"
+        self.metadata = {"name": self.name, "description": "Records a note.",
+                         "parameters": {"type": "object",
+                                        "properties": {"note": {"type": "string"}}}}
+        super().__init__(name=self.name, metadata=self.metadata)
+
+    def perform(self, note="", **kwargs):
+        RecorderAgent.noted.append(note)
+        _noted_by_module.append(note)
+        return "noted"
+
+    def system_context(self):
+        notes = RecorderAgent.noted + _noted_by_module
+        return "Notes: " + ", ".join(notes) if notes else None
+''', "recorder_agent.py")
+        prompts = []
+
+        def fake_call(messages, tools=None):
+            prompts.append(messages[0]["content"])
+            last = messages[-1]
+            if last["role"] == "user" and "remember" in last["content"]:
+                message = {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": "call_1", "type": "function", "function": {
+                        "name": "Recorder", "arguments": json.dumps({"note": "user-a secret"})}}]}
+                return {"choices": [{"message": message, "finish_reason": "tool_calls"}]}, "fake"
+            message = {"role": "assistant", "content": "ok"}
+            return {"choices": [{"message": message, "finish_reason": "stop"}]}, "fake"
+
+        client = self.brainstem.app.test_client()
+        with patch.object(self.brainstem, "call_copilot", fake_call), \
+             patch.object(self.brainstem, "load_soul", return_value="SOUL"), \
+             patch.object(self.brainstem, "VOICE_MODE", False):
+            first = client.post("/chat", json={"user_input": "remember this", "session_id": "a"})
+            second = client.post("/chat", json={"user_input": "hello", "session_id": "b"})
+
+        self.assertIn("[Recorder] noted", first.get_json()["agent_logs"])
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(prompts[-1], "SOUL")
+        self.assertIsNone(self.brainstem.load_agents()["Recorder"].system_context())
+
+    def test_a_failure_in_one_request_leaves_a_concurrent_requests_agents_alone(self):
+        """Request B's failing __init__ must not take request A's agents with it, even
+        when B fails between A getting the file's code and A running it."""
+        from unittest.mock import patch
+        self._write(self._agent(
+            module_code="import threading",
+            init_code="if threading.current_thread().name == 'B': raise RuntimeError('B failed')"))
+        a_has_code, b_done = threading.Event(), threading.Event()
+        real_agent_code = self.brainstem._agent_code
+        waits = []
+
+        def interleaved(filepath, spec):
+            if threading.current_thread().name == "B":
+                waits.append(("B started after A had the code", a_has_code.wait(10)))
+            code = real_agent_code(filepath, spec)
+            if threading.current_thread().name == "A":
+                a_has_code.set()
+                waits.append(("A resumed after B failed", b_done.wait(10)))
+            return code
+
+        results = {}
+
+        def request():
+            name = threading.current_thread().name
+            results[name] = sorted(self.brainstem.load_agents())
+            if name == "B":
+                b_done.set()
+
+        with patch.object(self.brainstem, "_agent_code", interleaved):
+            threads = [threading.Thread(target=request, name=name) for name in ("A", "B")]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+
+        self.assertEqual(sorted(waits), [("A resumed after B failed", True),
+                                         ("B started after A had the code", True)])
+        self.assertEqual(results, {"A": ["Counted"], "B": []})
+        self.assertEqual(sorted(self.brainstem.load_agents()), ["Counted"])
+
+    def test_per_request_agent_state_does_not_leak_into_the_next_load(self):
+        """perform(user_guid=...) scopes a memory agent's storage; the next request's
+        system_context() must start from the shared scope again."""
+        bundled = os.path.join(os.path.dirname(os.path.abspath(self.brainstem.__file__)), "agents")
+        shutil.copy(os.path.join(bundled, "context_memory_agent.py"), self._tmp)
+
+        first = self.brainstem.load_agents()["ContextMemory"]
+        first.perform(user_guid="someone-else")
+        self.assertEqual(first.storage_manager.current_guid, "someone-else")
+
+        second = self.brainstem.load_agents()["ContextMemory"]
+        self.assertIsNone(second.storage_manager.current_guid)
+
+    def test_every_load_builds_and_validates_its_agents_afresh(self):
+        """__init__ may compute metadata per request; it is re-run and re-validated
+        (and quarantined) on every load."""
+        name_file = os.path.join(self._tmp, "name.txt")
+        module_code = f'''
+def _name():
+    with open({name_file!r}, encoding="utf-8") as f:
+        return f.read()
+'''
+        path = self._write(self._agent(name="_name()", module_code=module_code))
+        for name, expect_loaded in (("Counted", True), ("Counted Twice", False), ("Renamed", True)):
+            with open(name_file, "w", encoding="utf-8") as f:
+                f.write(name)
+            agents = self.brainstem.load_agents()
+            self.assertEqual(name in agents, expect_loaded)
+            self.assertEqual(path in self.brainstem._quarantined_agents, not expect_loaded)
+        self.assertEqual(self._runs(), 3)
+
+    # ── exactness: the next request sees the file as it is now ───────────────
+
+    def test_new_and_deleted_files_take_effect_on_the_next_load(self):
+        self.assertEqual(self.brainstem.load_agents(), {})
+        path = self._write(self._agent())
+        self.assertEqual(list(self.brainstem.load_agents()), ["Counted"])
+
+        os.remove(path)
+
+        self.assertEqual(self.brainstem.load_agents(), {})
+        self.assertNotIn(path, self.brainstem._agent_code_cache)
+
+    def test_same_size_edit_in_the_same_second_is_reflected(self):
+        import importlib.util
+        path = self._write(self._agent(result="v1"))
+        before = os.stat(path)
+        with self._racy_window(-10**12):  # a settled first load leaves v1 in __pycache__
+            self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v1")
+
+        self._same_size_edit(path, before, self._agent(result="v2"))
+        if not sys.dont_write_bytecode:
+            # Python's own loader still accepts the v1 bytecode (it checks whole
+            # seconds and the size), which is what every request used to run.
+            probe = importlib.util.spec_from_file_location("agent_cache_probe", path)
+            module = importlib.util.module_from_spec(probe)
+            probe.loader.exec_module(module)
+            self.assertEqual(module.CountedAgent().perform(), "v1")
+
+        with self._racy_window(10**10):  # however slow this machine is
+            self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+
+    def test_replaced_file_is_reflected(self):
+        path = self._write(self._agent(result="v1"))
+        before = os.stat(path)
+        with self._racy_window(-10**12):
+            self.brainstem.load_agents()
+            replacement = self._write(self._agent(result="v2"), "replacement.tmp")
+            os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+            os.replace(replacement, path)  # same size and mtime, another inode
+
+            self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+
+    def test_touched_file_runs_again_without_recompiling(self):
+        path = self._write(self._agent())
+        with self._counting() as calls:
+            with self._racy_window(10**10):  # compiled from the bytes it read
+                self.brainstem.load_agents()
+            st = os.stat(path)
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+            self.assertNotEqual(os.stat(path).st_mtime_ns, st.st_mtime_ns)
+
+            self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v1")
+
+        self.assertEqual(self._runs(), 2)
+        self.assertEqual(calls["compiled"].count(path), 1)
+        self.assertEqual(calls["loaded"].count(path), 0)
+
+    def test_edit_that_keeps_every_stat_field_is_reflected(self):
+        """With coarse timestamps (FAT: 2 s, HFS+: 1 s) a quick same-size rewrite can
+        leave the stat signature untouched; recently stamped files are byte-compared."""
+        path = self._write(self._agent(result="v1"))
+        self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v1")
+
+        self._write(self._agent(result="v2"))
+        st = os.stat(path)
+        _, source, code, checked_ns = self.brainstem._agent_code_cache[path]
+        self.brainstem._agent_code_cache[path] = (
+            (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns),
+            source, code, checked_ns)
+
+        with self._racy_window(10**10):
+            self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+
+    def test_whole_second_mtime_keeps_the_wide_byte_compare_window(self):
+        """HFS+ and FAT store whole (or even) seconds, so a file whose mtime has no
+        sub-second part is byte-compared for longer than one with finer stamps."""
+        from unittest.mock import patch
+        path = self._write(self._agent())
+        whole = 1_700_000_000 * 10**9
+        for mtime_ns, expect_reread in ((whole, True), (whole + 123_456_789, False)):
+            st = os.stat(path)
+            os.utime(path, ns=(st.st_atime_ns, mtime_ns))
+            self.brainstem.load_agents()
+            st = os.stat(path)
+            signature, source, code, _ = self.brainstem._agent_code_cache[path]
+            # As if the last look was 1 s after the file's newest timestamp.
+            self.brainstem._agent_code_cache[path] = (
+                signature, source, code, max(st.st_mtime_ns, st.st_ctime_ns) + 10**9)
+            with patch.object(self.brainstem, "open", create=True, wraps=open) as opened:
+                self.assertIn("Counted", self.brainstem.load_agents())
+            self.assertEqual(path in [c.args[0] for c in opened.call_args_list], expect_reread)
+
+    def test_settled_file_first_load_uses_pycache_without_reading_the_source(self):
+        from unittest.mock import patch
+        path = self._write(self._agent())
+        with self._racy_window(-10**12), \
+             patch.object(self.brainstem, "open", create=True, wraps=open) as opened:
+            self.assertIn("Counted", self.brainstem.load_agents())
+        self.assertNotIn(path, [c.args[0] for c in opened.call_args_list])
+
+    def test_file_changed_just_before_a_start_runs_from_its_bytes(self):
+        path = self._write(self._agent(result="v1"))
+        before = os.stat(path)
+        with self._racy_window(-10**12):
+            self.brainstem.load_agents()  # v1 in __pycache__, as from an earlier run
+        self._same_size_edit(path, before, self._agent(result="v2"))
+        self.brainstem._agent_code_cache.clear()  # as after a restart
+
+        with self._racy_window(10**10):
+            self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+
+    def test_stat_change_after_a_fooled_first_load_reruns_the_bytes_on_disk(self):
+        """A settled file's first load trusts __pycache__, as Python (and every request
+        before this cache) does; any later stat change compiles the bytes on disk."""
+        path = self._write(self._agent(result="v1"))
+        before = os.stat(path)
+        with self._racy_window(-10**12):
+            self.brainstem.load_agents()
+            self._same_size_edit(path, before, self._agent(result="v2"))
+            self.brainstem._agent_code_cache.clear()  # as after a restart
+            self.brainstem.load_agents()  # may run the v1 bytecode, as Python itself would
+
+        st = os.stat(path)
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+        self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v2")
+
+    # ── failures are retried on the next request, as before ──────────────────
+
+    def test_syntax_error_is_compiled_again_on_every_load(self):
+        v1 = self._agent(result="v1")
+        path = self._write(v1)
+        before = os.stat(path)
+        with self._racy_window(10**10):  # compiled from its bytes: no v1 in __pycache__
+            self.assertIn("Counted", self.brainstem.load_agents())
+        broken = v1.replace("class CountedAgent", "clas CountedAgentX")
+        self._same_size_edit(path, before, broken)
+
+        with self._counting() as calls:
+            with self._racy_window(10**10):
+                for _ in range(2):  # never the v1 code it replaced
+                    self.assertEqual(self.brainstem.load_agents(), {})
+            self.brainstem._agent_code_cache.clear()  # as after a restart
+            with self._racy_window(-10**12):
+                for _ in range(2):
+                    self.assertEqual(self.brainstem.load_agents(), {})
+            self.assertNotIn(path, self.brainstem._agent_code_cache)
+
+            self._write(self._agent(result="v3"))
+            with self._racy_window(10**10):
+                self.assertEqual(self.brainstem.load_agents()["Counted"].perform(), "v3")
+
+        self.assertEqual(calls["compiled"].count(path), 3)
+        self.assertEqual(calls["loaded"].count(path), 2)
+
+    def test_failing_module_runs_again_from_its_cached_code(self):
+        flag = os.path.join(self._tmp, "module.fail")
+        open(flag, "w").close()
+        path = self._write(self._agent(
+            module_code=f"if os.path.exists({flag!r}): raise RuntimeError('not ready')"))
+        with self._counting() as calls:
+            self.assertEqual(self.brainstem.load_agents(), {})
+            self.assertEqual(self.brainstem.load_agents(), {})
+            os.remove(flag)
+            self.assertIn("Counted", self.brainstem.load_agents())
+
+        self.assertEqual(self._runs(), 3)
+        self.assertEqual(calls["compiled"].count(path) + calls["loaded"].count(path), 1)
+
+    def test_failed_instantiation_is_retried_on_the_next_load(self):
+        flag = os.path.join(self._tmp, "init.fail")
+        open(flag, "w").close()
+        self._write(self._agent(
+            init_code=f"if os.path.exists({flag!r}): raise RuntimeError('init failed')"))
+        self.assertEqual(self.brainstem.load_agents(), {})
+        self.assertEqual(self.brainstem.load_agents(), {})
+
+        os.remove(flag)
+
+        self.assertIn("Counted", self.brainstem.load_agents())
+        self.assertEqual(self._runs(), 3)
+
+    def test_missing_dependency_is_installed_and_the_file_retried(self):
+        import importlib
+        from unittest.mock import patch
+        deps = os.path.join(self._tmp, "deps")
+        os.makedirs(deps)
+        sys.path.insert(0, deps)
+        self.addCleanup(sys.path.remove, deps)
+        self.addCleanup(sys.modules.pop, "agent_cache_fake_dep", None)
+        self._write(self._agent(module_code="import agent_cache_fake_dep"))
+
+        def fake_install(package):
+            with open(os.path.join(deps, "agent_cache_fake_dep.py"), "w") as f:
+                f.write("VALUE = 1\n")
+            importlib.invalidate_caches()
+            return True
+
+        with patch.object(self.brainstem, "_auto_install", side_effect=fake_install) as install:
+            self.assertIn("Counted", self.brainstem.load_agents())
+            self.assertIn("Counted", self.brainstem.load_agents())
+
+        install.assert_called_once_with("agent_cache_fake_dep")
+        self.assertEqual(self._runs(), 3)
+
+    # ── logging and concurrency ──────────────────────────────────────────────
+
+    def test_agent_loaded_is_printed_when_its_code_changes(self):
+        import io
+
+        def load():
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.brainstem.load_agents()
+            return out.getvalue()
+
+        path = self._write(self._agent(result="v1"))
+        with self._racy_window(10**10):  # compiled from its bytes, so a touch reuses it
+            self.assertIn("Agent loaded: Counted", load())
+        st = os.stat(path)
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+        again = load()
+        self.assertNotIn("Agent loaded", again)
+        self.assertIn("1 agent(s) ready.", again)
+
+        self._write(self._agent(result="v2"))
+        self.assertIn("Agent loaded: Counted", load())
+
+    def test_concurrent_loads_all_see_every_agent(self):
+        expected = [f"Agent{i}" for i in range(5)]
+        for i, name in enumerate(expected):
+            self._write(self._agent(name=repr(name)), f"a{i}_agent.py")
+        results, errors = [], []
+
+        def worker():
+            try:
+                for _ in range(10):
+                    results.append(sorted(self.brainstem.load_agents()))
+            except Exception as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [expected] * 60)
 
 
 class TestCopilotTimeout(unittest.TestCase):
