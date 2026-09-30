@@ -1,16 +1,15 @@
 """
 Copilot HTTP keep-alive: calls share one connection pool, yet every call still sends
-what a one-shot requests.post would, and a dead pooled socket never costs the user a
-failed turn. Hermetic: a loopback fake Copilot API counts TCP connections.
+what a one-shot requests.post would. A call whose connection fails is never resent (the
+server may already have run it): it fails exactly as a one-shot call does, and the next
+call starts on a fresh pool. Hermetic: a loopback fake Copilot API counts TCP connections.
 
     python3 -m pytest tests/test_connection_reuse.py -v
 """
 import json
-import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest import mock
 
 import pytest
 import requests
@@ -26,7 +25,7 @@ class _FakeCopilot:
 
     def __init__(self):
         self.conns = 0
-        self.requests = []          # (method, path, headers) per request received
+        self.requests = []          # (method, path, headers, body) per request received
         self.drop_reused = False    # hang up on a kept-alive connection's next request
         self.drop_all = False       # hang up on every request, unanswered
         self.slow = 0.0             # seconds to sit on a POST before answering
@@ -46,8 +45,8 @@ class _FakeCopilot:
             def log_message(self, *args):
                 pass
 
-            def _hang_up(self):
-                fake.requests.append((self.command, self.path, dict(self.headers)))
+            def _hang_up(self, body=None):
+                fake.requests.append((self.command, self.path, dict(self.headers), body))
                 if fake.drop_all or (fake.drop_reused and self.served):
                     self.close_connection = True
                     return True
@@ -69,7 +68,7 @@ class _FakeCopilot:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-                if self._hang_up():
+                if self._hang_up(body):  # recorded only once fully read: the server "ran" it
                     return
                 time.sleep(fake.slow)
                 if not body.get("stream"):
@@ -104,7 +103,7 @@ class _FakeCopilot:
         return self.base + path
 
     def posts(self):
-        return sum(1 for method, _path, _headers in self.requests if method == "POST")
+        return sum(1 for method, *_ in self.requests if method == "POST")
 
 
 @pytest.fixture
@@ -209,7 +208,7 @@ def test_pooled_calls_send_the_one_shot_headers_and_never_cookies(fake):
     requests.post(fake.url(), headers=headers, json={"model": "m"}, timeout=10)  # what Grail sends
     for _ in range(2):  # both answers carry Set-Cookie
         bs._copilot_request("POST", fake.url(), headers=headers, json={"model": "m"}, timeout=10)
-    one_shot, first, second = (sent for _method, _path, sent in fake.requests)
+    one_shot, first, second = (sent for _method, _path, sent, _body in fake.requests)
     assert first == one_shot and second == one_shot
     assert "Cookie" not in second
 
@@ -228,46 +227,75 @@ def test_env_ca_bundle_applies_per_call_on_the_shared_session(fake, monkeypatch)
         bs._copilot_request("GET", "https://copilot.invalid/models", timeout=10)
 
 
-# ── A dead pooled socket ────────────────────────────────────────────────────────
+# ── A failed connection: never resent, reported unchanged, next call starts fresh ──
 
-def test_reused_socket_the_server_dropped_is_retried_once_on_a_fresh_connection(fake):
-    bs.call_copilot([{"role": "user", "content": "hi"}])
-    fake.drop_reused = True  # the server hangs up as the pooled socket is reused
+def _open_stream():
+    gen = bs.call_copilot_stream([{"role": "user", "content": "hi"}], model="gpt-4o")
+    assert next(gen) == ("delta", "Hello ")  # in flight, holding its own connection
+    return gen
+
+
+def test_lost_response_is_sent_once_and_chat_fails_exactly_as_grail_does(fake, monkeypatch):
+    # The reviewer's case: the server fully reads and records the POST on the reused
+    # socket, then hangs up without replying. It may already have run (and billed) the
+    # generation, so it must not be sent again, and /chat must fail exactly as it does
+    # when Grail's one-shot requests.post meets the same server.
+    monkeypatch.setattr(bs, "load_agents", lambda: {})
+    client = bs.app.test_client()
+    assert client.post("/chat", json={"user_input": "hi"}).get_json()["response"] == "Hello there"
+    fake.drop_all = True
+    with pytest.raises(requests.exceptions.ConnectionError) as one_shot:
+        requests.post(fake.url(), json={"model": "m"}, timeout=10)
+    conns, seen = fake.conns, len(fake.requests)
+    reply = client.post("/chat", json={"user_input": "again"})
+    assert [(method, body["messages"][-1]["content"])
+            for method, _path, _headers, body in fake.requests[seen:]] == [("POST", "again")]
+    assert fake.conns == conns  # it went out on the pooled socket
+    assert (reply.status_code, reply.get_json()) == (500, {"error": str(one_shot.value)})
+
+
+@pytest.mark.parametrize("failure", ["lost on a reused socket", "lost on a new socket", "read timeout"])
+def test_the_pool_never_sends_a_request_twice(fake, failure):
+    if failure != "lost on a new socket":
+        bs._copilot_request("POST", fake.url(), json={}, timeout=10)  # warm the pool
+    if failure == "read timeout":
+        fake.slow, timeout = 1.0, (5, 0.2)
+    else:
+        fake.drop_all, timeout = True, 10
+    posts = fake.posts()
+    with pytest.raises(requests.exceptions.RequestException) as pooled:
+        bs._copilot_request("POST", fake.url(), json={"model": "m"}, timeout=timeout)
+    assert fake.posts() == posts + 1
+    with pytest.raises(requests.exceptions.RequestException) as one_shot:  # Grail, same server
+        requests.post(fake.url(), json={"model": "m"}, timeout=timeout)
+    assert (type(pooled.value), str(pooled.value)) == (type(one_shot.value), str(one_shot.value))
+
+
+def test_after_a_failure_the_next_calls_start_on_a_fresh_pool(fake, monkeypatch):
+    first, second = _open_stream(), _open_stream()
+    list(first), list(second)  # both finish: the pool now holds two idle sockets
+    events = []
+    monkeypatch.setattr(bs, "_tlog", lambda event, data=None, level="info": events.append(event))
+    fake.drop_reused = True    # every reused socket is dead now, e.g. after a network change
+    with pytest.raises(requests.exceptions.ConnectionError):
+        bs.call_copilot([{"role": "user", "content": "hi"}])
+    assert bs._copilot_http is None
+    held = _open_stream()      # two calls at once: from the old pool, one would get its other socket
     result, _model = bs.call_copilot([{"role": "user", "content": "hi"}])
     assert result["choices"][0]["message"]["content"] == "Hello there"
-    assert fake.posts() == 3 and fake.conns == 2
-    assert bs._copilot_http is None  # the stale pool is dropped
+    assert list(held)[-1][1]["message"]["content"] == "Hello there"
+    assert fake.conns == 4 and events == ["api.connection_pool_dropped"]
 
 
-def test_stale_retry_happens_at_most_once(fake):
-    bs.call_copilot([{"role": "user", "content": "hi"}])
-    fake.drop_all = True
-    with pytest.raises(requests.exceptions.ConnectionError):
-        bs._copilot_request("POST", fake.url(), json={}, timeout=10)
-    assert fake.posts() == 3
-
-
-def test_connection_errors_on_a_cold_pool_are_not_retried(fake):
-    fake.drop_all = True
-    with pytest.raises(requests.exceptions.ConnectionError):
-        bs._copilot_request("POST", fake.url(), json={}, timeout=10)
-    assert fake.posts() == 1
-
-
-def test_timeouts_are_never_retried_by_the_pool(fake):
-    bs._copilot_request("POST", fake.url(), json={}, timeout=10)
-    fake.slow = 1.0
-    with pytest.raises(requests.exceptions.ReadTimeout):
-        bs._copilot_request("POST", fake.url(), json={}, timeout=(5, 0.2))
-    assert fake.posts() == 2
-
-
-def test_connect_failures_are_not_retried(fake):
+def test_a_late_failure_never_drops_a_newer_pool(fake, monkeypatch):
     bs._copilot_request("GET", fake.url("/models"), timeout=10)  # warm pool
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        refused = "http://127.0.0.1:%d/models" % sock.getsockname()[1]
-    with mock.patch.object(bs.requests, "request") as one_shot, \
-            pytest.raises(requests.exceptions.ConnectionError):
-        bs._copilot_request("GET", refused, timeout=10)
-    assert not one_shot.called
+    newer = requests.Session()
+
+    def fail_after_another_call_replaced_the_pool(session, *args, **kwargs):
+        bs._copilot_http = newer
+        raise requests.exceptions.ConnectionError("lost")
+
+    monkeypatch.setattr(requests.Session, "request", fail_after_another_call_replaced_the_pool)
+    with pytest.raises(requests.exceptions.ConnectionError):
+        bs._copilot_request("POST", fake.url(), json={}, timeout=10)
+    assert bs._copilot_http is newer

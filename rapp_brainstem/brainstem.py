@@ -36,7 +36,6 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
 import requests
-import urllib3
 from flask import Flask, request, jsonify, redirect, send_from_directory, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -1907,18 +1906,15 @@ def _copilot_request(method, url, **kwargs):
     try:
         return session.request(method, url, **kwargs)
     except requests.exceptions.ConnectionError as e:
-        # "Connection aborted" before any response on a warm pool: the reused socket
-        # was already dropped by the server or network, which a fresh connection would
-        # not have hit. Drop the pool and make the call once more, one-shot. Timeouts,
-        # connect/TLS/proxy errors and failures after the response began are not retried.
-        if not (warm and e.args and isinstance(e.args[0], urllib3.exceptions.ProtocolError)):
-            raise
-        with _copilot_http_lock:
-            if _copilot_http is session:
-                _copilot_http = None
-        _tlog("api.stale_connection_retry", {"error": str(e)[:200]}, level="warn")
-        print("[brainstem] Reused Copilot connection was already closed — retrying on a new one")
-        return requests.request(method, url, **kwargs)
+        # Never resend: the server may already have run (and billed) the request before
+        # the connection failed. Fail exactly as a one-shot call would, and stop trusting
+        # the rest of this pool so the next call starts fresh.
+        if warm:
+            with _copilot_http_lock:
+                if _copilot_http is session:
+                    _copilot_http = None
+                    _tlog("api.connection_pool_dropped", {"error": str(e)[:200]}, level="warn")
+        raise
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
