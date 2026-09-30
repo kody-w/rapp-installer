@@ -32,6 +32,7 @@ class _FakeCopilot:
         self.hold_after_done = 0.0  # seconds between the [DONE] event and the body's end
         self.trickle_after_done = 0.0  # seconds of one-byte chunks (5 a second) after [DONE]
         self.after_done = b""       # raw chunks sent between [DONE] and the body's end
+        self.content_length = False  # end the stream by Content-Length instead of chunks
         lock = threading.Lock()
         fake = self
 
@@ -79,6 +80,14 @@ class _FakeCopilot:
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
+                if fake.content_length:  # after_done is raw bytes here, not chunks
+                    body = (b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n'
+                            b'data: {"choices":[{"delta":{"content":"there"},"finish_reason":"stop"}]}\n\n'
+                            b"data: [DONE]\n\n" + fake.after_done)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 self.send_header("Transfer-Encoding", "chunked")
                 self.end_headers()
                 events = b"".join(b"%X\r\n%s\r\n" % (len(data), data) for data in (
@@ -187,6 +196,35 @@ def test_bytes_after_done_are_read_through_and_the_connection_reused(fake):
     fake.after_done = b"%X\r\n%s\r\n" % (len(heartbeat), heartbeat)
     for _ in range(2):
         assert _stream()[-1][1]["message"]["content"] == "Hello there"
+    assert fake.conns == 1
+
+
+def test_drain_never_touches_a_connection_it_has_handed_back(fake, monkeypatch):
+    # The reviewer's race: a body that ends by length goes back to the pool before its
+    # last chunk reaches the drain, and another call may take the socket right then.
+    fake.content_length = True
+    fake.after_done = b": " + b"x" * 4000 + b"\n\n"  # longer than what the line reader buffers
+    real, taken = bs._copilot_request, []
+
+    def request(*args, **kwargs):
+        resp = real(*args, **kwargs)
+        raw, release = resp.raw, resp.raw.release_conn
+
+        def release_to_another_call():
+            conn = raw.connection
+            release()
+            if conn is not None:
+                conn.sock.settimeout(5.0)  # the other call's own timeout
+                taken.append(conn.sock)
+
+        raw.release_conn = release_to_another_call
+        return resp
+
+    monkeypatch.setattr(bs, "_copilot_request", request)
+    assert _stream()[-1][1]["message"]["content"] == "Hello there"
+    assert len(taken) == 1 and taken[0].gettimeout() == 5.0
+    monkeypatch.setattr(bs, "_copilot_request", real)
+    _stream()
     assert fake.conns == 1
 
 

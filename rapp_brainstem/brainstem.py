@@ -2304,7 +2304,8 @@ def _finish_stream(resp):
     bounded in total, however the bytes trickle in: past 1 s or 64 KB, resp.close()
     closes the connection, as before."""
     try:
-        sock = resp.raw.connection.sock
+        conn = resp.raw.connection
+        sock = conn.sock
         deadline = time.monotonic() + 1
         budget = 65536
         sock.settimeout(1)
@@ -2313,7 +2314,9 @@ def _finish_stream(resp):
         for chunk in resp.raw.stream(1024, decode_content=True):
             budget -= len(chunk)
             left = deadline - time.monotonic()
-            if budget < 0 or left <= 0:
+            # A body that ends by length is handed back to the pool before its last
+            # chunk arrives here; from then on the socket may be another call's.
+            if budget < 0 or left <= 0 or resp.raw.connection is not conn:
                 return
             sock.settimeout(left)
     except Exception:
