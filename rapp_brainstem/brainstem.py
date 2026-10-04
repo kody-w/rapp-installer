@@ -834,6 +834,23 @@ def _tlog(event_type, data=None, level="info"):
         if len(_flight_log) > _FLIGHT_LOG_MAX:
             _flight_log[:] = _flight_log[-_FLIGHT_LOG_MAX:]
 
+def _log_api_usage(endpoint, session_id, model, usage):
+    """Record a completion's token usage so cost-accounting tools (e.g. RAPP AI
+    Dyno) can price Brainstem's Copilot API calls the same way they price the
+    Copilot CLI. `usage` is the OpenAI-shaped `usage` object a /chat/completions
+    response carries (prompt_tokens, completion_tokens, total_tokens), or None
+    when the response didn't include one (some models/streams omit it)."""
+    if not isinstance(usage, dict):
+        return
+    _tlog("api.usage", {
+        "endpoint": endpoint,
+        "session_id": session_id,
+        "model": model,
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+    })
+
 def _tlog_save():
     """Persist flight log to disk (called periodically and on export)."""
     try:
@@ -2302,6 +2319,7 @@ def chat():
         # Up to 3 tool-call rounds
         for _ in range(3):
             response, responded_model = call_copilot(messages, tools=tools)
+            _log_api_usage("chat", session_id, responded_model, response.get("usage"))
             choice   = response["choices"][0]
             msg      = choice["message"]
             finish   = choice.get("finish_reason", "")
@@ -2326,6 +2344,7 @@ def chat():
             reply = ""
             try:
                 final_response, responded_model = call_copilot(messages, tools=None)
+                _log_api_usage("chat", session_id, responded_model, final_response.get("usage"))
                 final_reply = (
                     final_response["choices"][0]["message"].get("content") or ""
                 ).strip()
@@ -2523,6 +2542,7 @@ def chat_stream():
                 # stream produced nothing usable (no content and no tool_calls).
                 if round_msg is None or (not round_msg.get("content") and not round_msg.get("tool_calls")):
                     response, responded_model = call_copilot(messages, tools=tools)
+                    _log_api_usage("chat_stream", session_id, responded_model, response.get("usage"))
                     round_msg = response["choices"][0]["message"]
                     round_from_fallback = True
                     # Emit the whole content as one delta so the client still renders
@@ -2571,6 +2591,7 @@ def chat_stream():
                     answer_streamed = bool(collected) or answer_streamed
                 except StreamingUnsupported:
                     final_response, responded_model = call_copilot(messages, tools=None)
+                    _log_api_usage("chat_stream", session_id, responded_model, final_response.get("usage"))
                     reply = (final_response["choices"][0]["message"].get("content") or "").strip()
                     answer_streamed = False
                     if reply:
